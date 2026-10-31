@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      1.3.6
+// @version      1.3.7
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -415,21 +415,29 @@ function PB_AFK_CORE() {
     inCasino = false;
 
     // 1) 选择弹窗（升级三选一 / 祭坛祝福等 cards 卡片）→ 自动选：
-    //    quality 模式（默认）：识别每张卡 .top .rar 的品质文本，选品质最高的；
-    //    同品质并列时用"弹窗选第几项"做 tie-break；无品质卡（新招式）排最后。
-    //    index 模式：直接选"弹窗选第几项"。
+    //    品质优先只作用于 .card.offer（升级卡：技能强化/新招式/维生素/道具统一结构，
+    //    品质在 .top .rar，5 档：普通<少见<稀有<史诗<传说）；融合/契约等弹窗的 .rar
+    //    是别的语义，fall through 按序号选。同品质并列用"弹窗选第几项"tie-break。
     //    兜底链：按目标按数字键 → 无效则点目标卡 → 仍失败按 Esc。
     if (settings.autoPick && modal.querySelector('.cards .card')) {
       var cards = modal.querySelectorAll('.cards .card');
       pickRetry++;
-      var target = 0;
       var pref = Math.min(4, Math.max(1, Math.round(+settings.interactPick || 1))) - 1;
-      if (settings.pickMode === 'quality') {
+      var hasOffer = !!modal.querySelector('.cards .card.offer');
+      var target = 0;
+      if (settings.pickMode === 'quality' && hasOffer) {
         var bestTier = -1, ties = [];
         for (var q = 0; q < cards.length; q++) {
+          var card = cards[q];
+          if (!card.classList.contains('offer')) continue; // 融合/契约等非品质卡不计
           var rarEl = null;
-          try { rarEl = cards[q].querySelector('.top .rar'); } catch (e) {}
+          try { rarEl = card.querySelector('.top .rar'); } catch (e) {}
           var tier = rarityTier(rarEl ? rarEl.textContent : '');
+          if (tier == null) { // .rar 缺失/新招式卡 → 扫 .top 全文兜底
+            var topEl = null;
+            try { topEl = card.querySelector('.top'); } catch (e) {}
+            tier = rarityTier(topEl ? topEl.textContent : '');
+          }
           if (tier == null) tier = -1;
           if (tier > bestTier) { bestTier = tier; ties = [q]; }
           else if (tier === bestTier) ties.push(q);
