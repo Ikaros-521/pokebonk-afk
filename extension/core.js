@@ -20,6 +20,7 @@ function PB_AFK_CORE() {
     interactMode: 'tap', interactEvery: 1500,           // 交互 E：拾取/激活/捕捉（短间隔探）
     interactPick: 1,                                    // 交互弹窗选第几项（1-4；没有该项则兜底 1 → Esc）
     pickMode: 'quality',                                // 弹窗选择：quality=品质最高优先 / index=按序号
+    pickLog: true,                                      // 自动选择时在屏幕上短暂提示选了什么
     autoUnpause: true,                          // 自动点"继续"关闭暂停
     autoRestart: true,                          // 死亡/胜利结算后自动再来一次
     autoReconnect: true,                        // 断线后自动点"重试"
@@ -336,6 +337,34 @@ function PB_AFK_CORE() {
   }
 
   var watcherRetry = 0;
+  // 轻量提示：屏幕上方短暂显示自动动作（~2s 自动消失），可关
+  var toastBox = null;
+  function pbToast(msg, color) {
+    if (!settings.pickLog) return;
+    try {
+      if (!toastBox || !toastBox.isConnected) {
+        toastBox = document.createElement('div');
+        toastBox.id = 'pb-toasts';
+        toastBox.style.cssText = 'position:fixed;top:12%;left:50%;transform:translateX(-50%);z-index:2147483646;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none;';
+        (document.body || document.documentElement).appendChild(toastBox);
+      }
+      var el = document.createElement('div');
+      el.style.cssText = 'background:rgba(16,16,26,.92);color:#f4f1ff;border:2px solid ' + (color || '#3fd769') +
+        ';border-radius:8px;padding:6px 16px;font:bold 15px/1.4 system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.5);opacity:0;transition:opacity .18s;white-space:nowrap;';
+      el.textContent = msg;
+      toastBox.appendChild(el);
+      while (toastBox.children.length > 3) toastBox.firstChild.remove();
+      requestAnimationFrame(function () { el.style.opacity = '1'; });
+      setTimeout(function () { el.style.opacity = '0'; setTimeout(function () { el.remove(); }, 260); }, 1900);
+    } catch (e) {}
+  }
+  var toastAt = {};
+  function pbToastOnce(key, ms, msg, color) {
+    var now = performance.now();
+    if (toastAt[key] && now - toastAt[key] < ms) return;
+    toastAt[key] = now;
+    pbToast(msg, color);
+  }
   function overlayWatcherTick() {
     if (!settings.autoUnpause && !settings.autoRestart && !settings.autoPick && !settings.autoReconnect) { watcherRetry = 0; pickRetry = 0; return; }
     // 挂机运行中始终处理；挂机关闭时只在页面不在前台（用户切走了）才处理，
@@ -355,6 +384,7 @@ function PB_AFK_CORE() {
     try { casinoEl = modal.querySelector('.sl-cab, .sl-lever, .sl-logo, .sl-window'); } catch (e) {}
     if (casinoEl) {
       inCasino = true;
+      pbToastOnce('casino', 10000, '🎰 检测到赌场，自动离开（停按 E 防抽奖）', '#e94756');
       var cbtns = modal.querySelectorAll('button');
       for (var ci = 0; ci < cbtns.length; ci++) {
         var ct = (cbtns[ci].textContent || '').trim();
@@ -393,6 +423,13 @@ function PB_AFK_CORE() {
       }
       if (pickRetry === 1) {
         fireDigit(target + 1);
+        // 选择日志：品质 + 卡名（颜色用卡片自身品质色 --rc）
+        var pickCard = cards[target];
+        var pickRar = pickCard.querySelector('.top .rar');
+        var pickName = pickCard.querySelector('.bd h3');
+        var pickColor = pickCard.style.getPropertyValue('--rc') || '#3fd769';
+        pbToastOnce('pick' + Math.floor(performance.now() / 1000), 900,
+          '自动选：' + ((pickRar ? pickRar.textContent : '') || '新招式') + ' · ' + (pickName ? pickName.textContent : '未知'), pickColor.trim());
       } else if (pickRetry === 2) {
         try { if (cards[target] && cards[target].click) cards[target].click(); } catch (e) {}
       } else if (pickRetry >= 3) {
@@ -412,13 +449,20 @@ function PB_AFK_CORE() {
     // 2) 暂停界面 → 点"继续"（多语言文本匹配；比 Esc 稳，Esc 在部分界面是返回）
     if (settings.autoUnpause) {
       var resume = findResumeButton(modal);
-      if (resume) { try { resume.click(); } catch (e) {} return; }
+      if (resume) {
+        pbToastOnce('resume', 5000, '▶ 检测到暂停，已自动继续', '#3fd769');
+        try { resume.click(); } catch (e) {}
+        return;
+      }
     }
 
     // 3) 结算界面（死亡/胜利）→ 点"再来一次"
     if (settings.autoRestart) {
       var rb = findRestartButton();
-      if (rb) { try { rb.click(); } catch (e) {} }
+      if (rb) {
+        pbToastOnce('restart', 5000, '↺ 结算完成，自动再来一次', '#ffd23f');
+        try { rb.click(); } catch (e) {}
+      }
     }
 
     // 4) 断线界面（body>.loading 下的"重试"按钮）→ 自动重连
@@ -700,6 +744,7 @@ function PB_AFK_CORE() {
     body.appendChild(checkRow('自动关闭暂停(点继续)', 'autoUnpause'));
     body.appendChild(checkRow('结算后自动再来一次', 'autoRestart'));
     body.appendChild(checkRow('断线自动点重试', 'autoReconnect'));
+    body.appendChild(checkRow('选择日志提示', 'pickLog'));
     body.appendChild(checkRow('自动选升级(第1项)', 'autoPick'));
     body.appendChild(checkRow('后台保活音(近无声)', 'keepAlive'));
 
