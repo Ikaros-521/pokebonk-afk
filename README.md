@@ -3,6 +3,8 @@
 给 [pokebonk.com](https://pokebonk.com/)（3D 宝可梦幸存者页游）做的挂机工具：
 **Alt+Tab 切屏后游戏不再暂停、后台继续运行，并自动执行 WASD 绕圈 + 空格攻击 + Shift 技能的打怪策略**，你就可以切出去干别的事了。
 
+> 📦 仓库地址：<https://github.com/Ikaros-521/pokebonk-afk> · 当前版本 **v1.2.0**（适配游戏 v0.8.83，游戏大更新后如失效请提 issue）
+
 提供两种等价的安装方式，任选其一：
 
 | | 方案 A：油猴脚本 | 方案 B：Chrome 扩展 |
@@ -36,17 +38,26 @@
 ## 方案 A：油猴脚本安装
 
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/)（Chrome/Edge 商店均可）。
-2. 点击 Tampermonkey 图标 → 添加新脚本 → 清空，把 `pokebonk-afk.user.js` 全文粘贴进去 → `Ctrl+S` 保存。
+2. 安装脚本，两种方式任选：
+   - **一键安装（推荐）**：直接打开
+     <https://raw.githubusercontent.com/Ikaros-521/pokebonk-afk/main/pokebonk-afk.user.js>
+     Tampermonkey 会自动弹出安装页，点"**安装**"即可。
+   - **手动粘贴**：点 Tampermonkey 图标 → 添加新脚本 → 清空，把 [`pokebonk-afk.user.js`](https://github.com/Ikaros-521/pokebonk-afk/blob/main/pokebonk-afk.user.js) 的全文粘贴进去 → `Ctrl+S` 保存。
 3. 打开（或刷新）<https://pokebonk.com/>，右上角出现"PokéBonk 挂机助手"面板即成功。
    - 控制台会打印 `[PokéBonk AFK] 已加载`。
    - Chrome 的新版油猴即使没开"开发者模式"，脚本也会自动通过 `<script>` 注入主世界，无需额外设置。
+4. **更新**：重新打开第 2 步的一键安装链接覆盖安装，或重复手动粘贴；本地设置（圈大小等）不会丢。
 
 ## 方案 B：Chrome 扩展安装（无需油猴）
 
-1. 打开 `chrome://extensions/`（Edge 为 `edge://extensions/`）。
-2. 打开右上角"**开发者模式**"。
-3. 点"**加载已解压的扩展程序**"，选择本目录下的 `extension` 文件夹。
-4. 打开 <https://pokebonk.com/>，右上角出现面板即成功；浏览器工具栏的扩展图标点开也有启动按钮。
+1. 获取 `extension` 文件夹，两种方式任选：
+   - **下载 ZIP**：打开 <https://github.com/Ikaros-521/pokebonk-afk/archive/refs/heads/main.zip> 并解压（得到 `pokebonk-afk-main/` 文件夹）。
+   - **git 克隆**：`git clone https://github.com/Ikaros-521/pokebonk-afk.git`
+2. 打开 `chrome://extensions/`（Edge 为 `edge://extensions/`）。
+3. 打开右上角"**开发者模式**"。
+4. 点"**加载已解压的扩展程序**"，选择 `extension` 文件夹（ZIP 方式位于 `pokebonk-afk-main/extension`）。
+5. 打开 <https://pokebonk.com/>，右上角出现面板即成功；浏览器工具栏的扩展图标点开也有启动按钮。
+6. **更新**：重新下载/拉取代码后，在 `chrome://extensions` 里点该扩展的刷新按钮 ↻，再刷新游戏页即可（本地设置不丢）。
 
 ---
 
