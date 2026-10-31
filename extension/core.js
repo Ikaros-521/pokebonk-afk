@@ -264,6 +264,8 @@ function PB_AFK_CORE() {
   // E 交互自适应退避：Esc 兜底触发（= E 弹窗选不了、人还在触发区）时翻倍延长 E 间隔，
   // 每 15 秒未再卡则减半，逐步恢复正常间隔，避免"弹窗→Esc→又弹"死循环
   var interactBackoff = 0, lastBackoffAt = 0;
+  // 赌场（老虎机）逃逸标志：true 时 tick 停按 E，防止误触发抽奖烧钱
+  var inCasino = false;
 
   function num(v, d) { v = +v; return isFinite(v) && v > 0 ? v : d; }
 
@@ -323,8 +325,26 @@ function PB_AFK_CORE() {
     // 所以只依赖 .modal 容器和按钮文本，不依赖具体面板类名）
     var modals;
     try { modals = document.querySelectorAll('.modal'); } catch (e) { return; }
-    if (!modals.length) { watcherRetry = 0; pickRetry = 0; return; }
+    if (!modals.length) { watcherRetry = 0; pickRetry = 0; inCasino = false; return; }
     var modal = modals[modals.length - 1];
+
+    // 0) 赌场/老虎机界面（.sl-* 专属类名）→ 停按 E（E 会触发抽奖烧钱），
+    //    自动点"离开"退出（Esc 在该界面无效）。此步优先级最高。
+    var casinoEl = null;
+    try { casinoEl = modal.querySelector('.sl-cab, .sl-lever, .sl-logo, .sl-window'); } catch (e) {}
+    if (casinoEl) {
+      inCasino = true;
+      var cbtns = modal.querySelectorAll('button');
+      for (var ci = 0; ci < cbtns.length; ci++) {
+        var ct = (cbtns[ci].textContent || '').trim();
+        if (ct === '离开' || ct === '離開' || /^(salir|leave|exit)$/i.test(ct)) {
+          try { cbtns[ci].click(); } catch (e) {}
+          break;
+        }
+      }
+      return;
+    }
+    inCasino = false;
 
     // 1) 选择弹窗（升级三选一 / 祭坛祝福等 cards 卡片）→ 自动选：
     //    首选 interactPick（默认1，可配3），该序号不存在或无效则兜底 1，仍失败再点第一张卡，最后 Esc
@@ -409,7 +429,8 @@ function PB_AFK_CORE() {
       lastUlt = now; tap(KEY.r, num(settings.ultHold, 120), now); want.add(KEY.r.code);
     }
     // 交互 E：拾取/激活/捕捉（无目标时按了无副作用，短间隔探；卡死时自动退避延长）
-    if (settings.interactMode === 'tap') {
+    // 赌场（老虎机）界面里禁按 E——E 会触发抽奖烧钱
+    if (settings.interactMode === 'tap' && !inCasino) {
       // 每 15 秒未再触发退避 → 间隔减半，逐步恢复正常
       if (interactBackoff > 0 && now - lastBackoffAt > 15000) {
         interactBackoff = Math.floor(interactBackoff / 2);
