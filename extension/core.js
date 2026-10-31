@@ -316,12 +316,14 @@ function PB_AFK_CORE() {
   }
 
   // ---- 品质识别：.top .rar 文本 → 等级分（越高越好），多语言表按"先具体后宽泛"排列 ----
+  // 官方中文品质名（zh 语言包实证）：普通/少见/稀有/史诗/特殊/传说/神话/活动限定
   var RARITY_TIERS = [
-    [/神话|神話|mythic|mítico|신화|神話/i, 5],
-    [/传说|傳說|legendary|legendario|전설|伝説/i, 4],
+    [/神话|神話|mythic|mítico/i, 5],
+    [/传说|傳說|legendary|legendario/i, 4],
     [/史诗|史詩|epic|épico|에픽|エピック/i, 3],
+    [/活动限定|活動限定|特殊|especial|special/i, 2.5],
     [/稀有|レア|레어|rare|raro/i, 2],
-    [/非凡|uncommon|poco común/i, 1.5],
+    [/少见|少見|非凡|uncommon|poco común|insólito/i, 1.5],
     [/普通|common|común|コモン|일반/i, 1]
   ];
   function rarityTier(text) {
