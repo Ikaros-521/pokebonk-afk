@@ -99,9 +99,20 @@
 
 1. **窗口别被完全盖住**（最省事）：游戏窗口留一条边可见、或放到另一台显示器、或缩小窗口——完全不受影响。
 2. **保活音频**（默认开启）：脚本播放一段约 -40dB 的近无声音频（听不见），让 Chrome 认为标签页"正在播放声音"，从而豁免后台定时器限流。窗口即使被完全遮挡也能继续跑。
-3. **完全保底**（如果上面还有问题）：用本目录的 `用Chrome专用窗口启动(最大后台兼容).bat` 启动 Chrome，它带这些参数：
-   `--disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=IntensiveWakeUpThrottling,CalculateNativeWinOcclusion`
-   注意：bat 用的是独立浏览器配置目录，第一次需要在那个窗口里重新加载一次扩展（或安装油猴脚本）。 minimized（最小化）状态任何方案都无法渲染，别最小化，切出去即可。
+3. **完全保底**（如果上面还有问题）：双击本目录的 `用Chrome专用窗口启动(最大后台兼容).bat` 启动一个专用 Chrome 窗口，它带这些参数：
+   `--disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=IntensiveWakeUpThrottling,CalculateNativeWinOcclusion`（另有 `--no-first-run` 跳过首次设置向导）。
+
+   **为什么不会自动装扩展？** 这个窗口用的是独立配置目录（`%LocalAppData%\Chrome-PokeBonk-AFK`），和你日常浏览器不共享扩展；而 Chrome 137 起，官方版 Chrome 出于安全考虑已忽略 `--load-extension` 命令行参数（实测 Chrome 156 确认），所以 bat 无法替你自动加载，**第一次需要手动装一次，装完永久保留**，以后直接双击 bat 即可：
+
+   1. 双击 bat，等新 Chrome 窗口打开。
+   2. 在该窗口地址栏输入 `chrome://extensions/` 回车。
+   3. 打开右上角"**开发者模式**"开关。
+   4. 点"**加载已解压的扩展程序**"，选择本目录下的 `extension` 文件夹。
+   5. 打开 <https://pokebonk.com/>，右上角出现面板即成功。
+
+   > 想省掉这步可以用 Edge：Edge（实测 156）仍支持 `--load-extension`，把 bat 里的浏览器路径改成 `msedge.exe` 并在参数里加一行 `--load-extension="%~dp0extension"` 就能全自动加载。
+
+   注意：minimized（最小化）状态任何方案都无法渲染，别最小化，切出去即可。
 
 另外：Chrome 的"内存节省程序"可能把挂了很久的标签页整个丢弃。到 `chrome://settings/performance` 把 pokebonk.com 加入"始终保持活跃"名单。
 
@@ -125,6 +136,7 @@
 | 右上角没有面板 | F9 切换显隐；控制台(F12)看有没有 `[PokéBonk AFK]` 日志和红色报错 |
 | 面板在但启动后不动 | 确认在对局内（不是菜单）；确认游戏按键就是 WASD/空格/Shift（游戏设置里可查） |
 | 切后台后卡住不动 | 开着"后台保活音"开关；或用 bat 启动器；或别把窗口完全盖住 |
+| 双击 bat 闪退 / 中文乱码 | bat 必须是 **ANSI(GBK) 编码 + CRLF 换行**（2026-10-31 版已修复）。如果你自己用编辑器改过 bat，用记事本"另存为"选 ANSI 保存即可；另外 rem 注释行里不要写 `%变量%`，会导致 cmd 读行错位 |
 | 后台变慢（约1步/秒） | 保活音频没生效（autoplay 被拦）：先在页面点一下/按一次 F8 再切走；或用 bat |
 | 油猴脚本报"无法注入主世界" | 正常降级提示，重启浏览器再试；或改用方案 B 扩展 |
 

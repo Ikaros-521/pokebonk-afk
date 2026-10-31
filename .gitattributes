@@ -1,0 +1,2 @@
+# bat 对换行符/编码敏感：GBK+CRLF 缺一不可，禁止 git 做 EOL 规范化
+*.bat -text

@@ -17,6 +17,8 @@ function PB_AFK_CORE() {
     spaceMode: 'tap', spaceEvery: 400, spaceHold: 90,   // 空格：点按/长按/关
     shiftMode: 'tap', shiftEvery: 2000, shiftHold: 150, // Shift：点按/长按/关
     ultMode: 'tap', ultEvery: 900, ultHold: 120,        // 大招 R：有就放（间隔探一次）
+    interactMode: 'tap', interactEvery: 600,            // 交互 E：拾取/激活/捕捉（短间隔探）
+    interactPick: 1,                                    // 交互弹窗选第几项（1-4；没有该项则兜底 1 → Esc）
     autoUnpause: true,                          // 自动点"继续"关闭暂停
     autoRestart: true,                          // 死亡/胜利结算后自动再来一次
     autoReconnect: true,                        // 断线后自动点"重试"
@@ -210,6 +212,7 @@ function PB_AFK_CORE() {
     space: { key: ' ', code: 'Space', keyCode: 32 },
     shift: { key: 'Shift', code: 'ShiftLeft', keyCode: 16, location: 1 },
     r: { key: 'r', code: 'KeyR', keyCode: 82 },
+    e: { key: 'e', code: 'KeyE', keyCode: 69 },
     esc: { key: 'Escape', code: 'Escape', keyCode: 27 },
     one: { key: '1', code: 'Digit1', keyCode: 49 }
   };
@@ -257,7 +260,7 @@ function PB_AFK_CORE() {
     return g.split('').map(function (c) { return KEY[c]; });
   });
   var startedAt = 0, lastTick = 0, lastAssert = 0;
-  var lastSpace = 0, lastShift = 0, lastUlt = 0, pickRetry = 0;
+  var lastSpace = 0, lastShift = 0, lastUlt = 0, lastInteract = 0, pickRetry = 0;
 
   function num(v, d) { v = +v; return isFinite(v) && v > 0 ? v : d; }
 
@@ -293,6 +296,19 @@ function PB_AFK_CORE() {
     return null;
   }
 
+  function fireDigit(n) { // Digit1..4：选择弹窗快捷键
+    var code = 'Digit' + n;
+    var t = fireTarget();
+    ['keydown', 'keyup'].forEach(function (type) {
+      var ev = new KeyboardEvent(type, { key: String(n), code: code, bubbles: true, cancelable: true, composed: true, repeat: false });
+      try {
+        Object.defineProperty(ev, 'keyCode', { get: function () { return 48 + n; } });
+        Object.defineProperty(ev, 'which', { get: function () { return 48 + n; } });
+      } catch (e) {}
+      try { t.dispatchEvent(ev); } catch (e) {}
+    });
+  }
+
   var watcherRetry = 0;
   function overlayWatcherTick() {
     if (!settings.autoUnpause && !settings.autoRestart && !settings.autoPick && !settings.autoReconnect) { watcherRetry = 0; pickRetry = 0; return; }
@@ -307,13 +323,21 @@ function PB_AFK_CORE() {
     if (!modals.length) { watcherRetry = 0; pickRetry = 0; return; }
     var modal = modals[modals.length - 1];
 
-    // 1) 升级三选一（.cards .card）→ 按 1 选第一项，无效则点第一张卡
+    // 1) 选择弹窗（升级三选一 / 祭坛祝福等 cards 卡片）→ 自动选：
+    //    首选 interactPick（默认1，可配3），该序号不存在或无效则兜底 1，仍失败再点第一张卡，最后 Esc
     if (settings.autoPick && modal.querySelector('.cards .card')) {
+      var cards = modal.querySelectorAll('.cards .card');
       pickRetry++;
-      fire(KEY.one, 'keydown'); fire(KEY.one, 'keyup');
-      if (pickRetry >= 3) {
-        var card = modal.querySelector('.cards .card');
-        try { if (card && card.click) card.click(); } catch (e) {}
+      var pref = Math.min(4, Math.max(1, Math.round(+settings.interactPick || 1)));
+      if (pickRetry === 1) {
+        fireDigit(pref);
+      } else if (pickRetry === 2 && pref !== 1) {
+        fireDigit(1); // 兜底 1
+      } else if (pickRetry === 3) {
+        try { if (cards[0] && cards[0].click) cards[0].click(); } catch (e) {} // 兜底点卡
+      } else if (pickRetry >= 4) {
+        fire(KEY.esc, 'keydown'); fire(KEY.esc, 'keyup'); // 最终兜底 Esc
+        pickRetry = 0;
       }
       return;
     }
@@ -374,6 +398,10 @@ function PB_AFK_CORE() {
       want.add(KEY.r.code);
     } else if (settings.ultMode === 'tap' && now - lastUlt >= num(settings.ultEvery, 900)) {
       lastUlt = now; tap(KEY.r, num(settings.ultHold, 120), now); want.add(KEY.r.code);
+    }
+    // 交互 E：拾取/激活/捕捉（无目标时按了无副作用，短间隔探）
+    if (settings.interactMode === 'tap' && now - lastInteract >= Math.max(150, num(settings.interactEvery, 600))) {
+      lastInteract = now; tap(KEY.e, 90, now); want.add(KEY.e.code);
     }
 
     // 先处理到期的松开
@@ -467,7 +495,8 @@ function PB_AFK_CORE() {
     var txt = settings.enabled
       ? '运行中 · ' + (settings.dir === 'ccw' ? '逆时针' : '顺时针') +
         ' · 空格' + modeText(settings.spaceMode) + ' · Shift' + modeText(settings.shiftMode) +
-        (settings.ultMode === 'off' ? '' : ' · R有就放')
+        (settings.ultMode === 'off' ? '' : ' · R有就放') +
+        (settings.interactMode === 'off' ? '' : ' · E拾取')
       : '已停止 · 按 F8 或点按钮启动';
     if (txt !== lastStatusText) { lastStatusText = txt; statusEl.textContent = txt; }
     if (dotEl) dotEl.className = 'pb-dot' + (settings.enabled ? ' on' : '');
@@ -589,6 +618,9 @@ function PB_AFK_CORE() {
     body.appendChild(numRow('Shift间隔', 'shiftEvery', 300, 10000, 50));
     body.appendChild(selRow('大招 R', 'ultMode', [['tap', '有就放'], ['hold', '长按'], ['off', '关']]));
     body.appendChild(numRow('R间隔', 'ultEvery', 200, 10000, 50));
+    body.appendChild(selRow('交互 E', 'interactMode', [['tap', '点按'], ['off', '关']]));
+    body.appendChild(numRow('E间隔', 'interactEvery', 150, 5000, 50));
+    body.appendChild(selRow('弹窗选第几项', 'interactPick', [['1', '第 1 项'], ['2', '第 2 项'], ['3', '第 3 项'], ['4', '第 4 项']]));
     body.appendChild(checkRow('自动关闭暂停(点继续)', 'autoUnpause'));
     body.appendChild(checkRow('结算后自动再来一次', 'autoRestart'));
     body.appendChild(checkRow('断线自动点重试', 'autoReconnect'));

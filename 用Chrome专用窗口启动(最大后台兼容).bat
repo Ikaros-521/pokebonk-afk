@@ -1,31 +1,48 @@
 @echo off
 rem ============================================================
-rem  PokeBonk åŽå°æŒ‚æœºä¸“ç”¨ Chrome å¯åŠ¨å™¨
-rem  ä½¿ç”¨ç‹¬ç«‹é…ç½®ç›®å½•ï¼Œä¸å½±å“ä½ æ—¥å¸¸çš„æµè§ˆå™¨ã€‚
-rem  å‚æ•°ä½œç”¨ï¼š
-rem   --disable-backgrounding-occluded-windows  çª—å£è¢«å®Œå…¨é®æŒ¡æ—¶ä¸å†å†»ç»“æ¸²æŸ“
-rem   --disable-renderer-backgrounding          åŽå°æ ‡ç­¾é¡µä¸é™çº§
+rem  PokeBonk ºóÌ¨¹Ò»ú×¨ÓÃ Chrome Æô¶¯Æ÷
+rem  Ê¹ÓÃ¶ÀÁ¢ÅäÖÃÄ¿Â¼£¬ÓëÈÕ³£ä¯ÀÀÆ÷»¥²»Ó°Ïì¡£
+rem  ²ÎÊý×÷ÓÃ£º
+rem   --disable-backgrounding-occluded-windows  ´°¿Ú±»ÍêÈ«ÕÚµ²Ê±²»ÔÙ¶³½áäÖÈ¾
+rem   --disable-renderer-backgrounding          ºóÌ¨±êÇ©Ò³²»½µ¼¶
 rem   --disable-features=IntensiveWakeUpThrottling,CalculateNativeWinOcclusion
-rem                                             å…³é—­å®šæ—¶å™¨é™æµä¸Žçª—å£é®æŒ¡æ£€æµ‹
+rem                                             ¹Ø±Õ¶¨Ê±Æ÷ÏÞÁ÷Óë´°¿ÚÕÚµ²¼ì²â
+rem  ËµÃ÷£ºChrome 137 Æð¹Ù·½°æÒÑºöÂÔ --load-extension£¬ÎÞ·¨ÓÃÃüÁîÐÐ×Ô¶¯×°À©Õ¹£¬
+rem        µÚÒ»´ÎÆô¶¯ºóÇë°´´°¿ÚÌáÊ¾ÊÖ¶¯¼ÓÔØÒ»´ÎÀ©Õ¹£¨Ö®ºóÓÀ¾Ã±£Áô£©¡£
+rem ============================================================
+rem  Î¬»¤×¢Òâ£º±¾ÎÄ¼þ±ØÐë±£´æÎª ANSI(GBK) ±àÂë + CRLF »»ÐÐ£»
+rem  rem ×¢ÊÍÐÐÀï²»ÒªÐ´°Ù·ÖºÅ±äÁ¿£¨ÖÐÎÄ×¢ÊÍÐÐÕ¹¿ª±äÁ¿»áÈÃ cmd ¶ÁÐÐ´íÎ»¡¢Õû¶ÎÂÒÌ×£©¡£
 rem ============================================================
 setlocal
-set CHROME=
+set "CHROME="
 if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set "CHROME=%ProgramFiles%\Google\Chrome\Application\chrome.exe"
 if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" set "CHROME=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
 if exist "%LocalAppData%\Google\Chrome\Application\chrome.exe" set "CHROME=%LocalAppData%\Google\Chrome\Application\chrome.exe"
 
-if "%CHROME%"=="" (
-  echo æœªæ‰¾åˆ° Chromeï¼Œè¯·æ‰‹åŠ¨æŠŠä¸‹é¢çš„è·¯å¾„æ”¹æˆä½ çš„ chrome.exe åŽé‡è¯•æœ¬è„šæœ¬ã€‚
+if not defined CHROME (
+  echo [´íÎó] Ã»ÓÐÕÒµ½ Chrome£¬Çë¼ì²é±¾½Å±¾ÀïµÄÈý¸öÂ·¾¶£¬»òÊÖ¶¯¸Ä³ÉÄãµÄ chrome.exe Î»ÖÃ¡£
   pause
   exit /b 1
 )
 
 start "" "%CHROME%" ^
   --user-data-dir="%LocalAppData%\Chrome-PokeBonk-AFK" ^
+  --no-first-run ^
+  --no-default-browser-check ^
   --disable-backgrounding-occluded-windows ^
   --disable-renderer-backgrounding ^
   --disable-features=IntensiveWakeUpThrottling,CalculateNativeWinOcclusion ^
   "https://pokebonk.com/"
 
-echo å·²ç”¨ç‹¬ç«‹çª—å£å¯åŠ¨ PokÃ©Bonkã€‚
-echo æç¤ºï¼šè¿™ä¸ªç‹¬ç«‹é…ç½®é‡Œç¬¬ä¸€æ¬¡éœ€è¦é‡æ–°åŠ è½½ä¸€æ¬¡æŒ‚æœºæ‰©å±•ï¼ˆchrome://extensions -^> åŠ è½½å·²è§£åŽ‹ -^> é€‰æ‹© extension æ–‡ä»¶å¤¹ï¼‰ã€‚
+echo.
+echo ÒÑÓÃ¶ÀÁ¢´°¿ÚÆô¶¯ PokeBonk¡£
+echo.
+if not exist "%~dp0extension\manifest.json" echo [ÌáÊ¾] Ã»ÕÒµ½ %~dp0extension\manifest.json £¬À©Õ¹¿ÉÄÜ²»ÍêÕû£¬°²×°²½ÖèµÚ 3 ²½»áÊ§°Ü¡£
+echo ¡¾½öµÚÒ»´ÎÐèÒª¡¿Õâ¸ö´°¿ÚÓÃµÄÊÇ¶ÀÁ¢ÅäÖÃ£¬²»´øÈÕ³£ä¯ÀÀÆ÷µÄÀ©Õ¹£¬ÇëÊÖ¶¯¼ÓÔØÒ»´Î£º
+echo   1. ÔÚÐÂ¿ªµÄ Chrome ´°¿ÚµØÖ·À¸ÊäÈë chrome://extensions/ ²¢»Ø³µ
+echo   2. ´ò¿ªÓÒÉÏ½Ç"¿ª·¢ÕßÄ£Ê½"¿ª¹Ø
+echo   3. µã"¼ÓÔØÒÑ½âÑ¹µÄÀ©Õ¹³ÌÐò"£¬Ñ¡Ôñ±¾Ä¿Â¼ÏÂµÄ extension ÎÄ¼þ¼Ð£º
+echo      %~dp0extension
+echo   ¼ÓÔØÒ»´ÎºóÓÀ¾Ã±£Áô£¬ÒÔºóÖ±½ÓË«»÷±¾½Å±¾¼´¿É¡£
+echo.
+pause
