@@ -19,6 +19,7 @@ function PB_AFK_CORE() {
     ultMode: 'tap', ultEvery: 900, ultHold: 120,        // 大招 R：有就放（间隔探一次）
     interactMode: 'tap', interactEvery: 1500,           // 交互 E：拾取/激活/捕捉（短间隔探）
     interactPick: 1,                                    // 交互弹窗选第几项（1-4；没有该项则兜底 1 → Esc）
+    pickMode: 'quality',                                // 弹窗选择：quality=品质最高优先 / index=按序号
     autoUnpause: true,                          // 自动点"继续"关闭暂停
     autoRestart: true,                          // 死亡/胜利结算后自动再来一次
     autoReconnect: true,                        // 断线后自动点"重试"
@@ -314,6 +315,24 @@ function PB_AFK_CORE() {
     });
   }
 
+  // ---- 品质识别：.top .rar 文本 → 等级分（越高越好），多语言表按"先具体后宽泛"排列 ----
+  var RARITY_TIERS = [
+    [/神话|神話|mythic|mítico|신화|神話/i, 5],
+    [/传说|傳說|legendary|legendario|전설|伝説/i, 4],
+    [/史诗|史詩|epic|épico|에픽|エピック/i, 3],
+    [/稀有|レア|레어|rare|raro/i, 2],
+    [/非凡|uncommon|poco común/i, 1.5],
+    [/普通|common|común|コモン|일반/i, 1]
+  ];
+  function rarityTier(text) {
+    if (!text) return null;
+    var t = String(text).toLowerCase();
+    for (var i = 0; i < RARITY_TIERS.length; i++) {
+      if (RARITY_TIERS[i][0].test(t)) return RARITY_TIERS[i][1];
+    }
+    return null; // 新招式卡显示"招式/Movimiento"等，无品质
+  }
+
   var watcherRetry = 0;
   function overlayWatcherTick() {
     if (!settings.autoUnpause && !settings.autoRestart && !settings.autoPick && !settings.autoReconnect) { watcherRetry = 0; pickRetry = 0; return; }
@@ -347,18 +366,34 @@ function PB_AFK_CORE() {
     inCasino = false;
 
     // 1) 选择弹窗（升级三选一 / 祭坛祝福等 cards 卡片）→ 自动选：
-    //    首选 interactPick（默认1，可配3），该序号不存在或无效则兜底 1，仍失败再点第一张卡，最后 Esc
+    //    quality 模式（默认）：识别每张卡 .top .rar 的品质文本，选品质最高的；
+    //    同品质并列时用"弹窗选第几项"做 tie-break；无品质卡（新招式）排最后。
+    //    index 模式：直接选"弹窗选第几项"。
+    //    兜底链：按目标按数字键 → 无效则点目标卡 → 仍失败按 Esc。
     if (settings.autoPick && modal.querySelector('.cards .card')) {
       var cards = modal.querySelectorAll('.cards .card');
       pickRetry++;
-      var pref = Math.min(4, Math.max(1, Math.round(+settings.interactPick || 1)));
+      var target = 0;
+      var pref = Math.min(4, Math.max(1, Math.round(+settings.interactPick || 1))) - 1;
+      if (settings.pickMode === 'quality') {
+        var bestTier = -1, ties = [];
+        for (var q = 0; q < cards.length; q++) {
+          var rarEl = null;
+          try { rarEl = cards[q].querySelector('.top .rar'); } catch (e) {}
+          var tier = rarityTier(rarEl ? rarEl.textContent : '');
+          if (tier == null) tier = -1;
+          if (tier > bestTier) { bestTier = tier; ties = [q]; }
+          else if (tier === bestTier) ties.push(q);
+        }
+        target = ties.length ? (pref < ties.length ? ties[pref] : ties[0]) : 0;
+      } else {
+        target = Math.min(cards.length - 1, pref);
+      }
       if (pickRetry === 1) {
-        fireDigit(pref);
-      } else if (pickRetry === 2 && pref !== 1) {
-        fireDigit(1); // 兜底 1
-      } else if (pickRetry === 3) {
-        try { if (cards[0] && cards[0].click) cards[0].click(); } catch (e) {} // 兜底点卡
-      } else if (pickRetry >= 4) {
+        fireDigit(target + 1);
+      } else if (pickRetry === 2) {
+        try { if (cards[target] && cards[target].click) cards[target].click(); } catch (e) {}
+      } else if (pickRetry >= 3) {
         fire(KEY.esc, 'keydown'); fire(KEY.esc, 'keyup'); // 最终兜底 Esc
         pickRetry = 0;
         // 弹窗选不了（多为 E 交互弹窗、人还在触发区）→ E 间隔翻倍退避，上限 60s
@@ -658,6 +693,7 @@ function PB_AFK_CORE() {
     body.appendChild(numRow('R间隔', 'ultEvery', 200, 10000, 50));
     body.appendChild(selRow('交互 E', 'interactMode', [['tap', '点按'], ['off', '关']]));
     body.appendChild(numRow('E间隔', 'interactEvery', 150, 5000, 50));
+    body.appendChild(selRow('弹窗选择', 'pickMode', [['quality', '品质优先'], ['index', '按序号']]));
     body.appendChild(selRow('弹窗选第几项', 'interactPick', [['1', '第 1 项'], ['2', '第 2 项'], ['3', '第 3 项'], ['4', '第 4 项']]));
     body.appendChild(checkRow('自动关闭暂停(点继续)', 'autoUnpause'));
     body.appendChild(checkRow('结算后自动再来一次', 'autoRestart'));
