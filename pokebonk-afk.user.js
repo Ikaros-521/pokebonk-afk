@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      1.3.0
+// @version      1.3.1
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -34,7 +34,7 @@ function PB_AFK_CORE() {
     spaceMode: 'tap', spaceEvery: 400, spaceHold: 90,   // 空格：点按/长按/关
     shiftMode: 'tap', shiftEvery: 2000, shiftHold: 150, // Shift：点按/长按/关
     ultMode: 'tap', ultEvery: 900, ultHold: 120,        // 大招 R：有就放（间隔探一次）
-    interactMode: 'tap', interactEvery: 600,            // 交互 E：拾取/激活/捕捉（短间隔探）
+    interactMode: 'tap', interactEvery: 1500,           // 交互 E：拾取/激活/捕捉（短间隔探）
     interactPick: 1,                                    // 交互弹窗选第几项（1-4；没有该项则兜底 1 → Esc）
     autoUnpause: true,                          // 自动点"继续"关闭暂停
     autoRestart: true,                          // 死亡/胜利结算后自动再来一次
@@ -278,6 +278,9 @@ function PB_AFK_CORE() {
   });
   var startedAt = 0, lastTick = 0, lastAssert = 0;
   var lastSpace = 0, lastShift = 0, lastUlt = 0, lastInteract = 0, pickRetry = 0;
+  // E 交互自适应退避：Esc 兜底触发（= E 弹窗选不了、人还在触发区）时翻倍延长 E 间隔，
+  // 每 15 秒未再卡则减半，逐步恢复正常间隔，避免"弹窗→Esc→又弹"死循环
+  var interactBackoff = 0, lastBackoffAt = 0;
 
   function num(v, d) { v = +v; return isFinite(v) && v > 0 ? v : d; }
 
@@ -355,6 +358,12 @@ function PB_AFK_CORE() {
       } else if (pickRetry >= 4) {
         fire(KEY.esc, 'keydown'); fire(KEY.esc, 'keyup'); // 最终兜底 Esc
         pickRetry = 0;
+        // 弹窗选不了（多为 E 交互弹窗、人还在触发区）→ E 间隔翻倍退避，上限 60s
+        var nb = interactBackoff ? interactBackoff * 2 : 3000;
+        if (nb > 60000) nb = 60000;
+        if (nb !== interactBackoff) console.log('[PokéBonk AFK] E 弹窗卡死，交互间隔延长至', Math.round((num(settings.interactEvery, 1500) + nb) / 100) / 10 + 's');
+        interactBackoff = nb;
+        lastBackoffAt = performance.now();
       }
       return;
     }
@@ -416,9 +425,17 @@ function PB_AFK_CORE() {
     } else if (settings.ultMode === 'tap' && now - lastUlt >= num(settings.ultEvery, 900)) {
       lastUlt = now; tap(KEY.r, num(settings.ultHold, 120), now); want.add(KEY.r.code);
     }
-    // 交互 E：拾取/激活/捕捉（无目标时按了无副作用，短间隔探）
-    if (settings.interactMode === 'tap' && now - lastInteract >= Math.max(150, num(settings.interactEvery, 600))) {
-      lastInteract = now; tap(KEY.e, 90, now); want.add(KEY.e.code);
+    // 交互 E：拾取/激活/捕捉（无目标时按了无副作用，短间隔探；卡死时自动退避延长）
+    if (settings.interactMode === 'tap') {
+      // 每 15 秒未再触发退避 → 间隔减半，逐步恢复正常
+      if (interactBackoff > 0 && now - lastBackoffAt > 15000) {
+        interactBackoff = Math.floor(interactBackoff / 2);
+        lastBackoffAt = now;
+      }
+      var effEvery = Math.max(150, num(settings.interactEvery, 1500)) + interactBackoff;
+      if (now - lastInteract >= effEvery) {
+        lastInteract = now; tap(KEY.e, 90, now); want.add(KEY.e.code);
+      }
     }
 
     // 先处理到期的松开
