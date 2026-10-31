@@ -127,8 +127,8 @@
 ## 注意事项
 
 - **游客登录有人机验证**：合成点击过不了"验证你是真人"，第一次进游戏请手动登录——这不影响挂机（游戏内移动按键不校验 isTrusted，已实测）。
-- **升级/进化自动选第一项**：不一定是最佳选择，只是防止挂机卡死。想要手动选就关掉面板里的开关，回来手选。
-- **死亡/结算界面**不会自动处理，回来手动 F8 停止再重新开局。
+- **升级/进化自动选第一项**：不一定是最佳选择，只是防止挂机卡死。可在面板改选 1–4 任意项，或关掉开关回来手选。
+- **死亡/结算界面**默认自动点"再来一次"继续挂机（面板可关）；想手动重开就关掉该开关。
 - **游戏声音**：因为游戏"以为"自己一直可见，它自带的"后台静音"设置不会生效。想静音就在标签页上右键→将标签页静音，或调游戏音量。
 - **多开/联机**：策略只是模拟键盘，联机模式下同样生效；但挂机打联机请自担风险。
 - **公平性提示**：这是非官方同人免费游戏。挂机本质是自动化按键，可能违反游戏服务条款或影响其他玩家（联机时），请酌情使用、自担风险。脚本不修改游戏数据、不加速、不注入游戏逻辑，只发送键盘事件和反暂停。
@@ -159,6 +159,23 @@ pokebonk-afk/
 │   ├── content.js                          # MAIN world 入口
 │   ├── bridge.js                           # 弹窗 ↔ 页面 消息桥
 │   ├── popup.html / popup.js               # 工具栏弹窗（启动/停止按钮）
+├── build.js                                # 构建脚本：core.js → 油猴脚本（字节级校验一致）
+├── video/                                  # 宣传视频（HyperFrames 工程）
+│   ├── landscape/  portrait/               # 横屏 1920x1080 / 竖屏 1080x1920 合成
+│   ├── out/                                # 渲染成品：pokebonk-afk-landscape.mp4 / -portrait.mp4
+│   └── assets/                             # 游戏截图、Edge-TTS 配音、chiptune BGM
 ├── 用Chrome专用窗口启动(最大后台兼容).bat    # 后台保底启动器
 └── README.md
+```
+
+---
+
+## 宣传视频
+
+`video/out/` 下有横屏、竖屏两版介绍视频（约 50 秒，Edge-TTS 中文配音 + 程序化 chiptune BGM，HyperFrames 渲染）。想重新生成：
+
+```bash
+cd video
+npx hyperframes render landscape --output out/pokebonk-afk-landscape.mp4
+npx hyperframes render portrait  --output out/pokebonk-afk-portrait.mp4
 ```
