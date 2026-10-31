@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      1.3.5
+// @version      1.3.6
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -372,7 +372,7 @@ function PB_AFK_CORE() {
       toastBox.appendChild(el);
       while (toastBox.children.length > 3) toastBox.firstChild.remove();
       requestAnimationFrame(function () { el.style.opacity = '1'; });
-      setTimeout(function () { el.style.opacity = '0'; setTimeout(function () { el.remove(); }, 260); }, 1900);
+      setTimeout(function () { el.style.opacity = '0'; setTimeout(function () { el.remove(); }, 300); }, 3500);
     } catch (e) {}
   }
   var toastAt = {};

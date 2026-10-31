@@ -355,7 +355,7 @@ function PB_AFK_CORE() {
       toastBox.appendChild(el);
       while (toastBox.children.length > 3) toastBox.firstChild.remove();
       requestAnimationFrame(function () { el.style.opacity = '1'; });
-      setTimeout(function () { el.style.opacity = '0'; setTimeout(function () { el.remove(); }, 260); }, 1900);
+      setTimeout(function () { el.style.opacity = '0'; setTimeout(function () { el.remove(); }, 300); }, 3500);
     } catch (e) {}
   }
   var toastAt = {};
