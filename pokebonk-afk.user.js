@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      1.8.1
+// @version      1.8.2
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -40,7 +40,7 @@ function PB_AFK_CORE() {
     pickLog: true,                                      // 自动选择时在屏幕上短暂提示选了什么
     catchPriority: true,                                // 有等待捕捉的虚弱精灵时：停攻击、按罗盘方位追过去、E 扔球
     navMode: 'safe',                                    // 自动寻路：safe=走向安全可交互点(按下方多选+优先级) / off=关
-    navItems: { altar: true, freechest: true, meowth: true, challenge: true, shrine: true, trick: true, ditto: true, magnet: true, snorlax: true, berry: true, hypno: true },
+    navItems: { altar: true, freechest: true, meowth: true, challenge: true, shrine: true, trick: true, ditto: true, magnet: true, snorlax: true, berry: true, hypno: false },
     navOrder: ['altar', 'freechest', 'meowth', 'challenge', 'shrine', 'trick', 'ditto', 'magnet', 'snorlax', 'berry', 'hypno'],
     autoUnpause: true,                          // 自动点"继续"关闭暂停
     autoRestart: true,                          // 死亡/胜利结算后自动再来一次
@@ -59,6 +59,11 @@ function PB_AFK_CORE() {
     ['ditto', 'magnet', 'snorlax', 'berry', 'hypno'].forEach(function (k) { settings.navItems[k] = true; });
   }
   settings.navMigrated = true;
+  // v1.8.2 迁移：引梦貘人点位交互是"忘招式换钱"商店（有卡死风险且误删招式），默认改为不追踪
+  if (!settings.navHypnoFixed) {
+    if (settings.navItems) settings.navItems.hypno = false;
+    settings.navHypnoFixed = true;
+  }
   // enabled 会持久化：刷新/断线重连后若之前在挂机则自动恢复（见文件末尾）
   function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(settings)); } catch (e) {} }
 
@@ -479,6 +484,16 @@ function PB_AFK_CORE() {
       return;
     }
     inCasino = false;
+
+    // 0.5) 商店类弹窗（引梦貘人忘招商店等，带"就绪"退出按钮）→ 自动点"就绪"关闭，
+    //      否则导航走到这里会被弹窗卡死出不去
+    var shopExit = null;
+    try { shopExit = modal.querySelector('.shop-exit'); } catch (e) {}
+    if (shopExit) {
+      pbToastOnce('shopExit', 5000, '🛍 商店弹窗，已自动点"就绪"关闭', '#ffc83a');
+      try { shopExit.click(); } catch (e) {}
+      return;
+    }
 
     // 1) 选择弹窗（升级三选一 / 祭坛祝福等 cards 卡片）→ 自动选：
     //    品质优先只作用于 .card.offer（升级卡：技能强化/新招式/维生素/道具统一结构，
