@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      1.9.0
+// @version      1.9.2
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -428,6 +428,17 @@ function PB_AFK_CORE() {
     }
     return null; // 新招式卡显示"招式/Movimiento"等，无品质
   }
+  // "已满"卡判定（百变怪复制等）：.kind 文本"已满/Máx."或半透明 opacity 0.45（点击无效）
+  function cardFull(card) {
+    var k = null;
+    try { k = card.querySelector('.top .kind'); } catch (e) {}
+    if (k) {
+      var t = (k.textContent || '').trim();
+      if (t === '已满' || /máx|max|full/i.test(t)) return true;
+    }
+    var op = parseFloat(card.style.opacity);
+    return isFinite(op) && op < 0.9;
+  }
 
   var watcherRetry = 0;
   // 轻量提示：屏幕上方短暂显示自动动作（~2s 自动消失），可关
@@ -500,48 +511,74 @@ function PB_AFK_CORE() {
       return;
     }
 
-    // 1) 选择弹窗（升级三选一 / 祭坛祝福等 cards 卡片）→ 自动选：
-    //    品质优先只作用于 .card.offer（升级卡：技能强化/新招式/维生素/道具统一结构，
-    //    品质在 .top .rar，5 档：普通<少见<稀有<史诗<传说）；融合/契约等弹窗的 .rar
-    //    是别的语义，fall through 按序号选。同品质并列用"弹窗选第几项"tie-break。
-    //    兜底链：按目标按数字键 → 无效则点目标卡 → 仍失败按 Esc。
+    // 1) 选择弹窗（升级三选一 / 百变怪复制 / 祭坛祝福等 cards 卡片）→ 自动选：
+    //    品质优先作用于两类卡：.card.offer（升级卡，品质在 .top .rar 文本，5 档）和
+    //    .card.mini（百变怪复制卡，品质在 --rc: var(--rN) 变量，r0-r4 同 5 档）。
+    //    "已满"卡（.kind=已满/Máx. 或 opacity 0.45）自动跳过降级，全满按 Esc。
+    //    融合/契约等弹窗（品质无法解析）fall through 按序号选。
+    //    兜底链：按目标按数字键（有 .key 时）→ 无效则点目标卡 → 仍失败按 Esc。
     if (settings.autoPick && modal.querySelector('.cards .card')) {
       var cards = modal.querySelectorAll('.cards .card');
       pickRetry++;
       var pref = Math.min(4, Math.max(1, Math.round(+settings.interactPick || 1))) - 1;
-      var hasOffer = !!modal.querySelector('.cards .card.offer');
+      var qualityCapable = !!modal.querySelector('.cards .card.offer, .cards .card.mini');
       var target = 0;
-      if (settings.pickMode === 'quality' && hasOffer) {
+      if (settings.pickMode === 'quality' && qualityCapable) {
         var bestTier = -1, ties = [];
+        var fullCount = 0, scoreCount = 0;
         for (var q = 0; q < cards.length; q++) {
           var card = cards[q];
-          if (!card.classList.contains('offer')) continue; // 融合/契约等非品质卡不计
-          var rarEl = null;
-          try { rarEl = card.querySelector('.top .rar'); } catch (e) {}
-          var tier = rarityTier(rarEl ? rarEl.textContent : '');
-          if (tier == null) { // .rar 缺失/新招式卡 → 扫 .top 全文兜底
-            var topEl = null;
-            try { topEl = card.querySelector('.top'); } catch (e) {}
-            tier = rarityTier(topEl ? topEl.textContent : '');
+          var isOffer = card.classList.contains('offer');
+          var isMini = card.classList.contains('mini');
+          if (!isOffer && !isMini) continue; // 融合/契约等非品质卡不计
+          if (cardFull(card)) { fullCount++; continue; }   // 已满卡跳过（自动降级）
+          var tier = null;
+          if (isOffer) {
+            var rarEl = null;
+            try { rarEl = card.querySelector('.top .rar'); } catch (e) {}
+            tier = rarityTier(rarEl ? rarEl.textContent : '');
+            if (tier == null) { // .rar 缺失/新招式卡 → 扫 .top 全文兜底
+              var topEl = null;
+              try { topEl = card.querySelector('.top'); } catch (e) {}
+              tier = rarityTier(topEl ? topEl.textContent : '');
+            }
+          } else { // mini 卡：--rc: var(--rN) → N 即档位（r0 普通 ... r4 传说）
+            var rc = card.style.getPropertyValue('--rc') || '';
+            var mRC = rc.match(/--r(\d)/);
+            tier = mRC ? (+mRC[1] + 1) : null;
           }
           if (tier == null) tier = -1;
+          scoreCount++;
           if (tier > bestTier) { bestTier = tier; ties = [q]; }
           else if (tier === bestTier) ties.push(q);
+        }
+        if (scoreCount === 0 && fullCount > 0) {
+          // 全部已满 → Esc 关闭（点了也无效）
+          fire(KEY.esc, 'keydown'); fire(KEY.esc, 'keyup');
+          pickRetry = 0;
+          return;
         }
         target = ties.length ? (pref < ties.length ? ties[pref] : ties[0]) : 0;
       } else {
         target = Math.min(cards.length - 1, pref);
       }
+      // mini 卡（百变怪复制等）无数字键，直接点卡；offer 卡优先数字键（更快）
+      var useKey = !!cards[target].querySelector('.key');
       if (pickRetry === 1) {
-        fireDigit(target + 1);
+        if (useKey) fireDigit(target + 1);
+        else { try { cards[target].click(); } catch (e) {} }
         // 选择日志：品质 + 卡名（颜色用卡片自身品质色 --rc）
         var pickCard = cards[target];
-        var pickRar = pickCard.querySelector('.top .rar');
+        var pickRar = pickCard.querySelector('.top .rar') || pickCard.querySelector('.top .kind');
         var pickName = pickCard.querySelector('.bd h3');
         var pickColor = pickCard.style.getPropertyValue('--rc') || '#3fd769';
+        var rcTier = (pickColor.match(/--r(\d)/) || [])[1];
+        var rarName = pickRar ? pickRar.textContent : (rcTier ? ['普通', '少见', '稀有', '史诗', '传说'][+rcTier] || '' : '');
         pbToastOnce('pick' + Math.floor(performance.now() / 1000), 900,
-          '自动选：' + ((pickRar ? pickRar.textContent : '') || '新招式') + ' · ' + (pickName ? pickName.textContent : '未知'), pickColor.trim());
+          '自动选：' + (rarName || '奖励') + ' · ' + (pickName ? pickName.textContent : '未知'), pickColor.trim());
       } else if (pickRetry === 2) {
+        try { if (cards[target] && cards[target].click) cards[target].click(); } catch (e) {}
+      } else if (pickRetry >= 3) {
         try { if (cards[target] && cards[target].click) cards[target].click(); } catch (e) {}
       } else if (pickRetry >= 3) {
         fire(KEY.esc, 'keydown'); fire(KEY.esc, 'keyup'); // 最终兜底 Esc
