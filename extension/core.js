@@ -21,7 +21,7 @@ function PB_AFK_CORE() {
     interactPick: 1,                                    // 交互弹窗选第几项（1-4；没有该项则兜底 1 → Esc）
     pickMode: 'quality',                                // 弹窗选择：quality=品质最高优先 / index=按序号
     pickLog: true,                                      // 自动选择时在屏幕上短暂提示选了什么
-    catchPriority: true,                                // 出现可捕捉精灵时停攻击、优先按 E 捕捉
+    navMode: 'safe',                                    // 自动寻路：safe=走向安全可交互点(祭坛/宝箱/商店等) / off=关
     autoUnpause: true,                          // 自动点"继续"关闭暂停
     autoRestart: true,                          // 死亡/胜利结算后自动再来一次
     autoReconnect: true,                        // 断线后自动点"重试"
@@ -269,9 +269,12 @@ function PB_AFK_CORE() {
   var interactBackoff = 0, lastBackoffAt = 0;
   // 赌场（老虎机）逃逸标志：true 时 tick 停按 E，防止误触发抽奖烧钱
   var inCasino = false;
-  // 捕捉优先状态：检测到游戏"[E] 投掷精灵球"提示（capture.canThrow()）时进入捕捉模式——
-  // 停空格/Shift/R（防止把目标打死）、加密按 E 扔球；提示消失 1.5s 后恢复转圈攻击
-  var catchMode = false, lastCatchSeen = 0, wasCatchMode = false;
+  // 自动寻路：游戏在 6-18m 内的可交互点（祭坛/宝箱/商店/挑战/圣地等）会显示 .wlabel
+  // DOM 标签（含屏幕坐标）。检测到白名单点位时，把移动方向从绕圈覆盖为"朝标签走"，
+  // 到达后 E 交互拾取，标签消失 1s 后恢复绕圈。老虎机/传送门/守护者等排除。
+  var NAV_WHITELIST = ['供品', '免费', '商店', '挑战', '圣地', '不给糖就捣蛋', '祭坛'];
+  var navTarget = null, lastNavSeen = 0, navWasActive = false;
+  var navActiveState = false, navTextState = ''; // 供 updateStatus 读取
 
   function num(v, d) { v = +v; return isFinite(v) && v > 0 ? v : d; }
 
@@ -499,22 +502,52 @@ function PB_AFK_CORE() {
     if (now - lastTick < 40) return;
     lastTick = now;
 
-    // ---- 捕捉优先检测 ----
-    // 游戏在 capture.canThrow()（可捕捉精灵进入 E 范围）时显示"[E] 投掷精灵球"提示。
-    // 头目友友球/复活队友是其他文案，关键词天然排除。
-    var canCatch = false;
-    try {
-      var promptEl = document.querySelector('#ui .prompt, .prompt');
-      if (promptEl && promptEl.style.display !== 'none') {
-        var ptxt = promptEl.textContent || '';
-        canCatch = ptxt.indexOf('投掷精灵球') !== -1 || /pok[eé]\s* ?ball/i.test(ptxt);
+    // ---- 自动寻路检测：白名单 .wlabel 点位 → 屏幕坐标导航 ----
+    var navActive = false, navDir = null, navText = '';
+    if (settings.navMode === 'safe') {
+      try {
+        var cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+        var best = null, bestD = 1e9;
+        var labels = document.querySelectorAll('.wlabel');
+        for (var li = 0; li < labels.length; li++) {
+          var lb = labels[li];
+          if (lb.style.display === 'none') continue;
+          var op = parseFloat(lb.style.opacity);
+          if (isFinite(op) && op < 0.15) continue;
+          var lt = lb.textContent || '';
+          var hit = false;
+          for (var wi = 0; wi < NAV_WHITELIST.length; wi++) {
+            if (lt.indexOf(NAV_WHITELIST[wi]) !== -1) { hit = true; break; }
+          }
+          if (!hit) continue;
+          var lx = parseFloat(lb.style.left), ly = parseFloat(lb.style.top);
+          if (!isFinite(lx) || !isFinite(ly)) continue;
+          var d = Math.hypot(lx - cx, ly - cy);
+          if (d < bestD) { bestD = d; best = { x: lx, y: ly, text: lt.replace(/\s+/g, ' ').slice(0, 24) }; }
+        }
+        if (best) {
+          navTarget = best; lastNavSeen = now;
+        }
+      } catch (e) {}
+      if (navTarget && now - lastNavSeen > 1200) navTarget = null; // 点位消失（已交互/走远）1.2s 后恢复
+      navActive = !!navTarget;
+      if (navActive) {
+        var dx = navTarget.x - cx, dy = navTarget.y - cy;
+        var dead = 44; // 屏幕像素死区，防止贴近时抖动
+        navDir = {
+          a: dx < -dead, d: dx > dead,
+          w: dy < -dead, s: dy > dead
+        };
+        if (navTarget !== null && !navWasActive) pbToastOnce('nav', 3000, '🧭 发现可交互点位，寻路前往：' + navTarget.text, '#36c96a');
+      } else if (navWasActive) {
+        pbToastOnce('navDone', 3000, '🧭 点位交互完成，恢复转圈策略', '#3fd769');
       }
-    } catch (e) {}
-    if (canCatch) lastCatchSeen = now;
-    catchMode = settings.catchPriority && (now - lastCatchSeen < 1500);
-    if (catchMode && !wasCatchMode) pbToastOnce('catchEnter', 3000, '🎯 发现可捕捉精灵：停攻击，专注捕捉', '#36c96a');
-    if (!catchMode && wasCatchMode) pbToastOnce('catchExit', 3000, '捕捉结束，恢复转圈策略', '#3fd769');
-    wasCatchMode = catchMode;
+      navWasActive = navActive;
+    } else {
+      navTarget = null; navWasActive = false;
+    }
+    navActiveState = navActive;
+    navTextState = navActive && navTarget ? navTarget.text : '';
 
 
     var seq = settings.dir === 'ccw' ? SEQ_CCW : SEQ_CW;
@@ -522,38 +555,42 @@ function PB_AFK_CORE() {
     var phase = Math.floor((now - startedAt) / phaseMs) % seq.length;
 
     var want = new Set();
-    seq[phase].forEach(function (d) { want.add(d.code); });
-    // 捕捉模式下停空格/Shift/R——防止把要抓的精灵打死
-    if (!catchMode && settings.spaceMode === 'hold') {
+    if (navActive && navDir) {
+      // 寻路模式：移动方向覆盖绕圈，朝屏幕上的点位标签走
+      if (navDir.w) want.add(KEY.w.code);
+      if (navDir.s) want.add(KEY.s.code);
+      if (navDir.a) want.add(KEY.a.code);
+      if (navDir.d) want.add(KEY.d.code);
+    } else {
+      seq[phase].forEach(function (d) { want.add(d.code); });
+    }
+    if (settings.spaceMode === 'hold') {
       want.add(KEY.space.code);
-    } else if (!catchMode && settings.spaceMode === 'tap' && now - lastSpace >= num(settings.spaceEvery, 400)) {
+    } else if (settings.spaceMode === 'tap' && now - lastSpace >= num(settings.spaceEvery, 400)) {
       lastSpace = now; tap(KEY.space, num(settings.spaceHold, 90), now); want.add(KEY.space.code);
     }
-    if (!catchMode && settings.shiftMode === 'hold') {
+    if (settings.shiftMode === 'hold') {
       want.add(KEY.shift.code);
-    } else if (!catchMode && settings.shiftMode === 'tap' && now - lastShift >= num(settings.shiftEvery, 2000)) {
+    } else if (settings.shiftMode === 'tap' && now - lastShift >= num(settings.shiftEvery, 2000)) {
       lastShift = now; tap(KEY.shift, num(settings.shiftHold, 150), now); want.add(KEY.shift.code);
     }
     // 大招 R：充能好就放（未充能时按了也无副作用，间隔探一次）
-    if (!catchMode && settings.ultMode === 'hold') {
+    if (settings.ultMode === 'hold') {
       want.add(KEY.r.code);
-    } else if (!catchMode && settings.ultMode === 'tap' && now - lastUlt >= num(settings.ultEvery, 900)) {
+    } else if (settings.ultMode === 'tap' && now - lastUlt >= num(settings.ultEvery, 900)) {
       lastUlt = now; tap(KEY.r, num(settings.ultHold, 120), now); want.add(KEY.r.code);
     }
     // 交互 E：拾取/激活/捕捉（无目标时按了无副作用，短间隔探；卡死时自动退避延长）
     // 赌场（老虎机）界面里禁按 E——E 会触发抽奖烧钱
-    // 捕捉模式：提示可见（球未在飞行）时 350ms 快按扔球
     if (settings.interactMode === 'tap' && !inCasino) {
       // 每 15 秒未再触发退避 → 间隔减半，逐步恢复正常
       if (interactBackoff > 0 && now - lastBackoffAt > 15000) {
         interactBackoff = Math.floor(interactBackoff / 2);
         lastBackoffAt = now;
       }
-      var effEvery = catchMode ? 350 : (Math.max(150, num(settings.interactEvery, 1500)) + interactBackoff);
-      if (!catchMode || canCatch) {
-        if (now - lastInteract >= effEvery) {
-          lastInteract = now; tap(KEY.e, 60, now); want.add(KEY.e.code);
-        }
+      var effEvery = navActive ? 500 : (Math.max(150, num(settings.interactEvery, 1500)) + interactBackoff);
+      if (now - lastInteract >= effEvery) {
+        lastInteract = now; tap(KEY.e, 90, now); want.add(KEY.e.code);
       }
     }
 
@@ -650,7 +687,7 @@ function PB_AFK_CORE() {
         ' · 空格' + modeText(settings.spaceMode) + ' · Shift' + modeText(settings.shiftMode) +
         (settings.ultMode === 'off' ? '' : ' · R有就放') +
         (settings.interactMode === 'off' ? '' : ' · E拾取') +
-        (catchMode ? ' · 🎯捕捉中' : '')
+        (navActiveState ? ' · 🧭寻路:' + navTextState : '')
       : '已停止 · 按 F8 或点按钮启动';
     if (txt !== lastStatusText) { lastStatusText = txt; statusEl.textContent = txt; }
     if (dotEl) dotEl.className = 'pb-dot' + (settings.enabled ? ' on' : '');
@@ -774,7 +811,7 @@ function PB_AFK_CORE() {
     body.appendChild(numRow('R间隔', 'ultEvery', 200, 10000, 50));
     body.appendChild(selRow('交互 E', 'interactMode', [['tap', '点按'], ['off', '关']]));
     body.appendChild(numRow('E间隔', 'interactEvery', 150, 5000, 50));
-    body.appendChild(checkRow('优先捕捉精灵', 'catchPriority'));
+    body.appendChild(selRow('自动寻路点位', 'navMode', [['safe', '开启(安全点位)'], ['off', '关']]));
     body.appendChild(selRow('弹窗选择', 'pickMode', [['quality', '品质优先'], ['index', '按序号']]));
     body.appendChild(selRow('弹窗选第几项', 'interactPick', [['1', '第 1 项'], ['2', '第 2 项'], ['3', '第 3 项'], ['4', '第 4 项']]));
     body.appendChild(checkRow('自动关闭暂停(点继续)', 'autoUnpause'));
