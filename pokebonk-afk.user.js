@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      1.8.0
+// @version      1.8.1
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -40,7 +40,7 @@ function PB_AFK_CORE() {
     pickLog: true,                                      // 自动选择时在屏幕上短暂提示选了什么
     catchPriority: true,                                // 有等待捕捉的虚弱精灵时：停攻击、按罗盘方位追过去、E 扔球
     navMode: 'safe',                                    // 自动寻路：safe=走向安全可交互点(按下方多选+优先级) / off=关
-    navItems: { altar: true, freechest: true, meowth: true, challenge: true, shrine: true, trick: true, ditto: false, magnet: false, snorlax: false, berry: false, hypno: false },
+    navItems: { altar: true, freechest: true, meowth: true, challenge: true, shrine: true, trick: true, ditto: true, magnet: true, snorlax: true, berry: true, hypno: true },
     navOrder: ['altar', 'freechest', 'meowth', 'challenge', 'shrine', 'trick', 'ditto', 'magnet', 'snorlax', 'berry', 'hypno'],
     autoUnpause: true,                          // 自动点"继续"关闭暂停
     autoRestart: true,                          // 死亡/胜利结算后自动再来一次
@@ -53,6 +53,12 @@ function PB_AFK_CORE() {
   };
   var settings = Object.assign({}, DEFAULTS);
   try { Object.assign(settings, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); } catch (e) {}
+  // v1.7.0→v1.8.1 一次性迁移：旧配置里新增点位（百变怪/磁铁/卡比兽/树果/引梦貘人）默认关，
+  // 用户反馈"就在边上却没追踪"——未迁移的旧配置自动补开（手动关过的用户会打上 navMigrated 标记不受影响）
+  if (settings.navItems && !settings.navMigrated && settings.navItems.snorlax === false) {
+    ['ditto', 'magnet', 'snorlax', 'berry', 'hypno'].forEach(function (k) { settings.navItems[k] = true; });
+  }
+  settings.navMigrated = true;
   // enabled 会持久化：刷新/断线重连后若之前在挂机则自动恢复（见文件末尾）
   function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(settings)); } catch (e) {} }
 
