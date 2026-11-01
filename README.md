@@ -3,8 +3,7 @@
 给 [pokebonk.com](https://pokebonk.com/)（3D 宝可梦幸存者页游）做的挂机工具：
 **Alt+Tab 切屏后游戏不再暂停、后台继续运行，并自动执行 WASD 绕圈 + 空格攻击 + Shift 技能的打怪策略**，你就可以切出去干别的事了。
 
-<img width="300" height="713" alt="image" src="https://github.com/user-attachments/assets/cf97f93b-a6c4-429d-b7cd-655274080535" />
-
+<img width="309" height="787" alt="image" src="https://github.com/user-attachments/assets/a3b6a463-a459-48ce-9997-4a0ef55270eb" />
 
 
 > 📦 仓库地址：<https://github.com/Ikaros-521/pokebonk-afk> · 🧩 油猴一键安装：<https://greasyfork.org/zh-CN/scripts/603082> · 当前版本 **v1.2.0**（适配游戏 v0.8.83，游戏大更新后如失效请提 issue）
