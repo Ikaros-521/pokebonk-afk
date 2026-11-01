@@ -325,6 +325,11 @@ function PB_AFK_CORE() {
   var CATCH_COLOR = '#5af0ff';
   var catchMode = false, lastCatchSeen = 0, wasCatchMode = false;
   var catchDir = null, catchDist = '';
+  // 地图标记追踪：玩家在 Tab 大地图点击放置的标记（最多 3 个）会生成 .compass.mkpin
+  // DOM 元素（dataset.k=点位类型、.cp-tip rotate=方位、.cp-d=距离），4 米内自动清除。
+  // 有标记时最高优先级响应：按方位走过去（用户手动放的标记=明确意图，类型不设限，
+  // 卡比兽/宝可梦蛋/百变怪/任意点位均可）。
+  var pinActive = false, pinDir = null, pinDist = '', pinKind = '', wasPinActive = false;
   function dirFromAngle(deg) { // 屏幕方位角(deg) → 八方向 WASD
     var o = { w: false, a: false, s: false, d: false };
     while (deg > 180) deg -= 360;
@@ -626,6 +631,28 @@ function PB_AFK_CORE() {
     navActiveState = navActive;
     navTextState = navActive && navTarget ? navTarget.text : '';
 
+    // ---- 地图标记追踪（最高优先级）：.compass.mkpin = 用户在 Tab 地图放的标记 ----
+    pinActive = false; pinDir = null; pinDist = ''; pinKind = '';
+    try {
+      var pins = document.querySelectorAll('.compass.mkpin');
+      for (var pi = 0; pi < pins.length; pi++) {
+        var pin = pins[pi];
+        if (pin.style.display === 'none') continue;
+        var ptip = pin.querySelector('.cp-tip');
+        var prot = parseFloat((ptip && ptip.style.transform || '').replace('rotate(', '').replace('rad)', ''));
+        if (!isFinite(prot)) continue;
+        pinKind = pin.dataset.k || '标记';
+        var pdEl = pin.querySelector('.cp-d');
+        pinDist = (pdEl && pdEl.textContent || '').trim();
+        pinDir = dirFromAngle((prot - Math.PI / 2) * 180 / Math.PI);
+        pinActive = true;
+        break;
+      }
+    } catch (e) {}
+    if (pinActive && !wasPinActive) pbToastOnce('pinEnter', 3000, '📍 前往地图标记：' + (pinKind || '目标') + (pinDist ? '（' + pinDist + '）' : ''), '#ffd23a');
+    if (!pinActive && wasPinActive) pbToastOnce('pinExit', 3000, '📍 到达地图标记，恢复转圈策略', '#ffd23a');
+    wasPinActive = pinActive;
+
     // ---- 捕捉追捕检测：罗盘指向 capture 色 marker = 有等待捕捉的虚弱精灵 ----
     var catchDirActive = false;
     try {
@@ -655,7 +682,13 @@ function PB_AFK_CORE() {
     var phase = Math.floor((now - startedAt) / phaseMs) % seq.length;
 
     var want = new Set();
-    if (catchMode && catchDirActive && catchDir) {
+    if (pinActive && pinDir) {
+      // 地图标记（最高优先级）：用户手动放置，按方位走过去；保留攻击（路过清怪）
+      if (pinDir.w) want.add(KEY.w.code);
+      if (pinDir.s) want.add(KEY.s.code);
+      if (pinDir.a) want.add(KEY.a.code);
+      if (pinDir.d) want.add(KEY.d.code);
+    } else if (catchMode && catchDirActive && catchDir) {
       // 追捕模式：按罗盘方位走向虚弱精灵（覆盖绕圈），停攻击防误杀
       if (catchDir.w) want.add(KEY.w.code);
       if (catchDir.s) want.add(KEY.s.code);
@@ -704,7 +737,7 @@ function PB_AFK_CORE() {
         interactBackoff = Math.floor(interactBackoff / 2);
         lastBackoffAt = now;
       }
-      var effEvery = catchMode ? 350 : (navActive ? 500 : (Math.max(150, num(settings.interactEvery, 1500)) + interactBackoff));
+      var effEvery = catchMode ? 350 : ((navActive || pinActive) ? 500 : (Math.max(150, num(settings.interactEvery, 1500)) + interactBackoff));
       if (!catchMode || promptCatch) {
         if (now - lastInteract >= effEvery) {
           lastInteract = now; tap(KEY.e, 60, now); want.add(KEY.e.code);
@@ -805,6 +838,7 @@ function PB_AFK_CORE() {
         ' · 空格' + modeText(settings.spaceMode) + ' · Shift' + modeText(settings.shiftMode) +
         (settings.ultMode === 'off' ? '' : ' · R有就放') +
         (settings.interactMode === 'off' ? '' : ' · E拾取') +
+        (pinActive ? ' · 📍标记:' + (pinKind || '') + (pinDist || '') : '') +
         (catchMode ? ' · 🎯追捕' + (catchDist || '') : '') +
         (navActiveState ? ' · 🧭寻路:' + navTextState : '')
       : '已停止 · 按 F8 或点按钮启动';
