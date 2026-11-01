@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PokéBonk 后台挂机助手",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "防切屏自动暂停 + 后台持续运行 + WASD绕圈/空格/Shift 自动打怪 + 自动点继续/自动重开/自动选升级（F8 启停，F9 面板显隐）。仅在 pokebonk.com 生效。",
   "minimum_chrome_version": "111",
   "content_scripts": [

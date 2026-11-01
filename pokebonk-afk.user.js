@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      1.5.0
+// @version      1.6.0
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -38,6 +38,7 @@ function PB_AFK_CORE() {
     interactPick: 1,                                    // 交互弹窗选第几项（1-4；没有该项则兜底 1 → Esc）
     pickMode: 'quality',                                // 弹窗选择：quality=品质最高优先 / index=按序号
     pickLog: true,                                      // 自动选择时在屏幕上短暂提示选了什么
+    catchPriority: true,                                // 有等待捕捉的虚弱精灵时：停攻击、按罗盘方位追过去、E 扔球
     navMode: 'safe',                                    // 自动寻路：safe=走向安全可交互点(祭坛/宝箱/商店等) / off=关
     autoUnpause: true,                          // 自动点"继续"关闭暂停
     autoRestart: true,                          // 死亡/胜利结算后自动再来一次
@@ -292,6 +293,27 @@ function PB_AFK_CORE() {
   var NAV_WHITELIST = ['供品', '免费', '商店', '挑战', '圣地', '不给糖就捣蛋', '祭坛'];
   var navTarget = null, lastNavSeen = 0, navWasActive = false;
   var navActiveState = false, navTextState = ''; // 供 updateStatus 读取
+  // 捕捉追捕：游戏罗盘（.compass）最高优先级指向"等待捕捉的虚弱精灵"（dataset.k 以
+  // capture 专属色 #5af0ff 结尾；boss/友球/宝箱/totem/召唤点为其他颜色可排除）。
+  // .cp-tip 的 rotate 角 = 目标屏幕方位，.cp-d 文本 = 距离。追捕模式：停攻击、按方位
+  // 走过去、靠近后提示"[E] 投掷精灵球"亮起时 350ms 快按 E 扔球；罗盘消失 1.5s 后恢复。
+  var CATCH_COLOR = '#5af0ff';
+  var catchMode = false, lastCatchSeen = 0, wasCatchMode = false;
+  var catchDir = null, catchDist = '';
+  function dirFromAngle(deg) { // 屏幕方位角(deg) → 八方向 WASD
+    var o = { w: false, a: false, s: false, d: false };
+    while (deg > 180) deg -= 360;
+    while (deg < -180) deg += 360;
+    if (deg > -22.5 && deg <= 22.5) o.d = true;
+    else if (deg > 22.5 && deg <= 67.5) { o.d = true; o.s = true; }
+    else if (deg > 67.5 && deg <= 112.5) o.s = true;
+    else if (deg > 112.5 && deg <= 157.5) { o.a = true; o.s = true; }
+    else if (deg > 157.5 || deg <= -157.5) o.a = true;
+    else if (deg > -157.5 && deg <= -112.5) { o.a = true; o.w = true; }
+    else if (deg > -112.5 && deg <= -67.5) o.w = true;
+    else { o.d = true; o.w = true; }
+    return o;
+  }
 
   function num(v, d) { v = +v; return isFinite(v) && v > 0 ? v : d; }
 
@@ -566,13 +588,42 @@ function PB_AFK_CORE() {
     navActiveState = navActive;
     navTextState = navActive && navTarget ? navTarget.text : '';
 
+    // ---- 捕捉追捕检测：罗盘指向 capture 色 marker = 有等待捕捉的虚弱精灵 ----
+    var catchDirActive = false;
+    try {
+      var comp = document.querySelector('.compass');
+      if (comp && comp.style.display !== 'none' &&
+          typeof comp.dataset.k === 'string' &&
+          comp.dataset.k.lastIndexOf(CATCH_COLOR) === comp.dataset.k.length - CATCH_COLOR.length) {
+        var tip = comp.querySelector('.cp-tip');
+        var rot = parseFloat((tip && tip.style.transform || '').replace('rotate(', '').replace('rad)', ''));
+        if (isFinite(rot)) {
+          var dir = dirFromAngle((rot - Math.PI / 2) * 180 / Math.PI);
+          var dEl = comp.querySelector('.cp-d');
+          catchDir = dir; catchDist = (dEl ? dEl.textContent : '').trim();
+          catchDirActive = true;
+          lastCatchSeen = now;
+        }
+      }
+    } catch (e) {}
+    catchMode = settings.catchPriority && (now - lastCatchSeen < 1500);
+    if (catchMode && !wasCatchMode) pbToastOnce('catchEnter', 3000, '🎯 发现等待捕捉的精灵，追捕中' + (catchDist ? '（' + catchDist + '）' : ''), '#36c96a');
+    if (!catchMode && wasCatchMode) pbToastOnce('catchExit', 3000, '捕捉结束，恢复转圈策略', '#3fd769');
+    wasCatchMode = catchMode;
+
 
     var seq = settings.dir === 'ccw' ? SEQ_CCW : SEQ_CW;
     var phaseMs = Math.max(80, num(settings.phaseMs, 1000));
     var phase = Math.floor((now - startedAt) / phaseMs) % seq.length;
 
     var want = new Set();
-    if (navActive && navDir) {
+    if (catchMode && catchDirActive && catchDir) {
+      // 追捕模式：按罗盘方位走向虚弱精灵（覆盖绕圈），停攻击防误杀
+      if (catchDir.w) want.add(KEY.w.code);
+      if (catchDir.s) want.add(KEY.s.code);
+      if (catchDir.a) want.add(KEY.a.code);
+      if (catchDir.d) want.add(KEY.d.code);
+    } else if (navActive && navDir) {
       // 寻路模式：移动方向覆盖绕圈，朝屏幕上的点位标签走
       if (navDir.w) want.add(KEY.w.code);
       if (navDir.s) want.add(KEY.s.code);
@@ -581,33 +632,45 @@ function PB_AFK_CORE() {
     } else {
       seq[phase].forEach(function (d) { want.add(d.code); });
     }
-    if (settings.spaceMode === 'hold') {
+    // 追捕/寻路期间停空格/Shift/R——防止打死要抓的精灵
+    if (!catchMode && settings.spaceMode === 'hold') {
       want.add(KEY.space.code);
     } else if (settings.spaceMode === 'tap' && now - lastSpace >= num(settings.spaceEvery, 400)) {
       lastSpace = now; tap(KEY.space, num(settings.spaceHold, 90), now); want.add(KEY.space.code);
     }
     if (settings.shiftMode === 'hold') {
       want.add(KEY.shift.code);
-    } else if (settings.shiftMode === 'tap' && now - lastShift >= num(settings.shiftEvery, 2000)) {
+    } else if (!catchMode && settings.shiftMode === 'tap' && now - lastShift >= num(settings.shiftEvery, 2000)) {
       lastShift = now; tap(KEY.shift, num(settings.shiftHold, 150), now); want.add(KEY.shift.code);
     }
     // 大招 R：充能好就放（未充能时按了也无副作用，间隔探一次）
-    if (settings.ultMode === 'hold') {
+    if (!catchMode && settings.ultMode === 'hold') {
       want.add(KEY.r.code);
-    } else if (settings.ultMode === 'tap' && now - lastUlt >= num(settings.ultEvery, 900)) {
+    } else if (!catchMode && settings.ultMode === 'tap' && now - lastUlt >= num(settings.ultEvery, 900)) {
       lastUlt = now; tap(KEY.r, num(settings.ultHold, 120), now); want.add(KEY.r.code);
     }
     // 交互 E：拾取/激活/捕捉（无目标时按了无副作用，短间隔探；卡死时自动退避延长）
     // 赌场（老虎机）界面里禁按 E——E 会触发抽奖烧钱
+    // 追捕模式："[E] 投掷精灵球"提示可见（精灵进 E 范围）时 350ms 快按扔球
+    var promptCatch = false;
+    try {
+      var pEl = document.querySelector('#ui .prompt, .prompt');
+      if (pEl && pEl.style.display !== 'none') {
+        var ptxt = pEl.textContent || '';
+        promptCatch = ptxt.indexOf('投掷精灵球') !== -1 || /pok[eé]\s* ?ball/i.test(ptxt);
+      }
+    } catch (e) {}
     if (settings.interactMode === 'tap' && !inCasino) {
       // 每 15 秒未再触发退避 → 间隔减半，逐步恢复正常
       if (interactBackoff > 0 && now - lastBackoffAt > 15000) {
         interactBackoff = Math.floor(interactBackoff / 2);
         lastBackoffAt = now;
       }
-      var effEvery = navActive ? 500 : (Math.max(150, num(settings.interactEvery, 1500)) + interactBackoff);
-      if (now - lastInteract >= effEvery) {
-        lastInteract = now; tap(KEY.e, 90, now); want.add(KEY.e.code);
+      var effEvery = catchMode ? 350 : (navActive ? 500 : (Math.max(150, num(settings.interactEvery, 1500)) + interactBackoff));
+      if (!catchMode || promptCatch) {
+        if (now - lastInteract >= effEvery) {
+          lastInteract = now; tap(KEY.e, 60, now); want.add(KEY.e.code);
+        }
       }
     }
 
@@ -704,6 +767,7 @@ function PB_AFK_CORE() {
         ' · 空格' + modeText(settings.spaceMode) + ' · Shift' + modeText(settings.shiftMode) +
         (settings.ultMode === 'off' ? '' : ' · R有就放') +
         (settings.interactMode === 'off' ? '' : ' · E拾取') +
+        (catchMode ? ' · 🎯追捕' + (catchDist || '') : '') +
         (navActiveState ? ' · 🧭寻路:' + navTextState : '')
       : '已停止 · 按 F8 或点按钮启动';
     if (txt !== lastStatusText) { lastStatusText = txt; statusEl.textContent = txt; }
@@ -828,6 +892,7 @@ function PB_AFK_CORE() {
     body.appendChild(numRow('R间隔', 'ultEvery', 200, 10000, 50));
     body.appendChild(selRow('交互 E', 'interactMode', [['tap', '点按'], ['off', '关']]));
     body.appendChild(numRow('E间隔', 'interactEvery', 150, 5000, 50));
+    body.appendChild(checkRow('优先追捕虚弱精灵', 'catchPriority'));
     body.appendChild(selRow('自动寻路点位', 'navMode', [['safe', '开启(安全点位)'], ['off', '关']]));
     body.appendChild(selRow('弹窗选择', 'pickMode', [['quality', '品质优先'], ['index', '按序号']]));
     body.appendChild(selRow('弹窗选第几项', 'interactPick', [['1', '第 1 项'], ['2', '第 2 项'], ['3', '第 3 项'], ['4', '第 4 项']]));
