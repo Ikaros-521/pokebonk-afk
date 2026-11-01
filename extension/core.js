@@ -22,7 +22,9 @@ function PB_AFK_CORE() {
     pickMode: 'quality',                                // 弹窗选择：quality=品质最高优先 / index=按序号
     pickLog: true,                                      // 自动选择时在屏幕上短暂提示选了什么
     catchPriority: true,                                // 有等待捕捉的虚弱精灵时：停攻击、按罗盘方位追过去、E 扔球
-    navMode: 'safe',                                    // 自动寻路：safe=走向安全可交互点(祭坛/宝箱/商店等) / off=关
+    navMode: 'safe',                                    // 自动寻路：safe=走向安全可交互点(按下方多选+优先级) / off=关
+    navItems: { altar: true, freechest: true, meowth: true, challenge: true, shrine: true, trick: true, ditto: false, magnet: false, snorlax: false, berry: false, hypno: false },
+    navOrder: ['altar', 'freechest', 'meowth', 'challenge', 'shrine', 'trick', 'ditto', 'magnet', 'snorlax', 'berry', 'hypno'],
     autoUnpause: true,                          // 自动点"继续"关闭暂停
     autoRestart: true,                          // 死亡/胜利结算后自动再来一次
     autoReconnect: true,                        // 断线后自动点"重试"
@@ -273,7 +275,36 @@ function PB_AFK_CORE() {
   // 自动寻路：游戏在 6-18m 内的可交互点（祭坛/宝箱/商店/挑战/圣地等）会显示 .wlabel
   // DOM 标签（含屏幕坐标）。检测到白名单点位时，把移动方向从绕圈覆盖为"朝标签走"，
   // 到达后 E 交互拾取，标签消失 1s 后恢复绕圈。老虎机/传送门/守护者等排除。
-  var NAV_WHITELIST = ['供品', '免费', '商店', '挑战', '圣地', '不给糖就捣蛋', '祭坛'];
+  // 自动寻路点位定义：words = 标签文本匹配词（当前语言），fn = 结构匹配（class 等）。
+  // 官方中文名实证自 zh 语言包：供品(祭坛祝福)/免费(宝箱·精灵球)/商店(喵喵)/挑战/圣地/捣蛋/
+  // 百变怪/磁力(磁铁)/卡比兽/树果/引梦貘人。老虎机(₽)/彼岸(传送门)/守护者/诅咒类排除。
+  var NAV_DEFS = [
+    { key: 'altar', name: '祭坛祝福', words: ['祭坛'], fn: function (el) { return el.classList.contains('charge'); } },
+    { key: 'freechest', name: '免费宝箱·精灵球', words: ['免费', 'gratis'] },
+    { key: 'meowth', name: '喵喵商店', words: ['商店', 'tienda'] },
+    { key: 'challenge', name: '挑战', words: ['剩余', '挑战', 'desafío'] },
+    { key: 'shrine', name: '圣地', words: ['圣地', 'santuario'] },
+    { key: 'trick', name: '捣蛋', words: ['捣蛋', 'truco'] },
+    { key: 'ditto', name: '百变怪', words: ['百变怪', 'ditto'] },
+    { key: 'magnet', name: '磁铁', words: ['磁力', '磁铁', 'imán', 'magnet'] },
+    { key: 'snorlax', name: '卡比兽', words: ['卡比兽', 'snorlax'] },
+    { key: 'berry', name: '树果', words: ['树果', 'bayas', 'berry'] },
+    { key: 'hypno', name: '引梦貘人', words: ['引梦', 'hypno'] }
+  ];
+  var NAV_DEFS_BY_KEY = {};
+  NAV_DEFS.forEach(function (d) { NAV_DEFS_BY_KEY[d.key] = d; });
+  function navLabelMatch(el, def) {
+    if (def.fn && def.fn(el)) return true;
+    var tx = (el.textContent || '').toLowerCase();
+    var words = def.words || [];
+    for (var i = 0; i < words.length; i++) {
+      if (tx.indexOf(words[i].toLowerCase()) !== -1) return true;
+    }
+    return false;
+  }
+  function navTargetText(el, def) { // 状态/toast 里的点位名：有名称定义用名称，否则标签原文
+    return (def && def.name) ? def.name : (el.textContent || '').replace(/\s+/g, ' ').slice(0, 24);
+  }
   var navTarget = null, lastNavSeen = 0, navWasActive = false;
   var navActiveState = false, navTextState = ''; // 供 updateStatus 读取
   // 捕捉追捕：游戏罗盘（.compass）最高优先级指向"等待捕捉的虚弱精灵"（dataset.k 以
@@ -524,34 +555,37 @@ function PB_AFK_CORE() {
     if (now - lastTick < 40) return;
     lastTick = now;
 
-    // ---- 自动寻路检测：白名单 .wlabel 点位 → 屏幕坐标导航 ----
+    // ---- 自动寻路检测：多选点位按优先级排队，可见即导航 ----
     var navActive = false, navDir = null, navText = '';
     if (settings.navMode === 'safe') {
       try {
         var cx = window.innerWidth / 2, cy = window.innerHeight / 2;
-        var best = null, bestD = 1e9;
         var labels = document.querySelectorAll('.wlabel');
-        for (var li = 0; li < labels.length; li++) {
-          var lb = labels[li];
-          if (lb.style.display === 'none') continue;
-          var op = parseFloat(lb.style.opacity);
-          if (isFinite(op) && op < 0.15) continue;
-          var lt = lb.textContent || '';
-          var hit = false;
-          for (var wi = 0; wi < NAV_WHITELIST.length; wi++) {
-            if (lt.indexOf(NAV_WHITELIST[wi]) !== -1) { hit = true; break; }
+        // 按优先级顺序（navOrder）遍历启用的点位类型，第一个有可见标签的类型即目标；
+        // 同类型多个标签取离屏幕中心最近
+        var order = settings.navOrder || [];
+        var items = settings.navItems || {};
+        for (var oi = 0; oi < order.length; oi++) {
+          var key = order[oi];
+          if (!items[key]) continue;
+          var def = NAV_DEFS_BY_KEY[key];
+          if (!def) continue;
+          var best = null, bestD = 1e9;
+          for (var li = 0; li < labels.length; li++) {
+            var lb = labels[li];
+            if (lb.style.display === 'none') continue;
+            var op = parseFloat(lb.style.opacity);
+            if (isFinite(op) && op < 0.15) continue;
+            if (!navLabelMatch(lb, def)) continue;
+            var lx = parseFloat(lb.style.left), ly = parseFloat(lb.style.top);
+            if (!isFinite(lx) || !isFinite(ly)) continue;
+            var d = Math.hypot(lx - cx, ly - cy);
+            if (d < bestD) { bestD = d; best = { x: lx, y: ly, text: navTargetText(lb, def) }; }
           }
-          if (!hit) continue;
-          var lx = parseFloat(lb.style.left), ly = parseFloat(lb.style.top);
-          if (!isFinite(lx) || !isFinite(ly)) continue;
-          var d = Math.hypot(lx - cx, ly - cy);
-          if (d < bestD) { bestD = d; best = { x: lx, y: ly, text: lt.replace(/\s+/g, ' ').slice(0, 24) }; }
+          if (best) { navTarget = best; lastNavSeen = now; break; } // 高优先级可见即选，排队语义
         }
-        if (best) {
-          navTarget = best; lastNavSeen = now;
-        }
+        if (navTarget && now - lastNavSeen > 1200) navTarget = null; // 点位消失（已交互/走远）1.2s 后恢复
       } catch (e) {}
-      if (navTarget && now - lastNavSeen > 1200) navTarget = null; // 点位消失（已交互/走远）1.2s 后恢复
       navActive = !!navTarget;
       if (navActive) {
         var dx = navTarget.x - cx, dy = navTarget.y - cy;
@@ -823,6 +857,12 @@ function PB_AFK_CORE() {
       '.pb-num{width:78px;text-align:right}',
       '.pb-chk{cursor:pointer}',
       '.pb-chk input{accent-color:#2fae4f}',
+      '.pb-navlist{display:grid;gap:3px;max-height:132px;overflow-y:auto;border:1px solid rgba(255,255,255,.14);border-radius:6px;padding:4px;background:rgba(0,0,0,.25)}',
+      '.pb-navrow{display:flex;align-items:center;gap:5px;font-size:11.5px}',
+      '.pb-navrow input{accent-color:#36c96a}',
+      '.pb-navnm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.pb-navbtn{width:18px;height:16px;flex:none;border:none;border-radius:3px;background:rgba(255,255,255,.1);color:#e8e8f0;font-size:9px;cursor:pointer;padding:0;line-height:1}',
+      '.pb-navbtn:hover{background:rgba(255,255,255,.22)}',
       '.pb-tip{padding:6px 10px 9px;opacity:.5;font-size:10.5px;border-top:1px solid rgba(255,255,255,.08)}'
     ].join('');
     var st = document.createElement('style');
@@ -833,6 +873,53 @@ function PB_AFK_CORE() {
   function setPanelVisible(v) {
     settings.panelVisible = !!v; save();
     if (panelEl) panelEl.style.display = v ? '' : 'none';
+  }
+
+  var navListEl = null;
+  function renderNavList() {
+    if (!navListEl) return;
+    navListEl.innerHTML = '';
+    var order = settings.navOrder || [];
+    order.forEach(function (key) {
+      var def = NAV_DEFS_BY_KEY[key];
+      if (!def) return;
+      var row = document.createElement('div');
+      row.className = 'pb-navrow';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !!(settings.navItems && settings.navItems[key]);
+      cb.addEventListener('change', function () {
+        if (!settings.navItems) settings.navItems = {};
+        settings.navItems[key] = cb.checked;
+        save();
+      });
+      var nm = document.createElement('span');
+      nm.className = 'pb-navnm';
+      nm.textContent = def.name;
+      nm.title = '勾选追踪，▲▼ 调优先级（越靠上越优先）';
+      var up = document.createElement('button');
+      up.className = 'pb-navbtn';
+      up.textContent = '▲';
+      up.addEventListener('click', function () { moveNav(key, -1); });
+      var dn = document.createElement('button');
+      dn.className = 'pb-navbtn';
+      dn.textContent = '▼';
+      dn.addEventListener('click', function () { moveNav(key, 1); });
+      row.appendChild(cb);
+      row.appendChild(nm);
+      row.appendChild(up);
+      row.appendChild(dn);
+      navListEl.appendChild(row);
+    });
+  }
+  function moveNav(key, dir) {
+    var arr = settings.navOrder || [];
+    var i = arr.indexOf(key), j = i + dir;
+    if (i < 0 || j < 0 || j >= arr.length) return;
+    arr.splice(i, 1);
+    arr.splice(j, 0, key);
+    save();
+    renderNavList();
   }
 
   function buildPanel() {
@@ -876,7 +963,11 @@ function PB_AFK_CORE() {
     body.appendChild(selRow('交互 E', 'interactMode', [['tap', '点按'], ['off', '关']]));
     body.appendChild(numRow('E间隔', 'interactEvery', 150, 5000, 50));
     body.appendChild(checkRow('优先追捕虚弱精灵', 'catchPriority'));
-    body.appendChild(selRow('自动寻路点位', 'navMode', [['safe', '开启(安全点位)'], ['off', '关']]));
+    body.appendChild(selRow('自动寻路点位', 'navMode', [['safe', '开启(按下方多选)'], ['off', '关']]));
+    navListEl = document.createElement('div');
+    navListEl.className = 'pb-navlist';
+    body.appendChild(navListEl);
+    renderNavList();
     body.appendChild(selRow('弹窗选择', 'pickMode', [['quality', '品质优先'], ['index', '按序号']]));
     body.appendChild(selRow('弹窗选第几项', 'interactPick', [['1', '第 1 项'], ['2', '第 2 项'], ['3', '第 3 项'], ['4', '第 4 项']]));
     body.appendChild(checkRow('自动关闭暂停(点继续)', 'autoUnpause'));
