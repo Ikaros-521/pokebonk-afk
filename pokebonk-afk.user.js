@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      1.7.0
+// @version      1.8.0
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -862,7 +862,12 @@ function PB_AFK_CORE() {
       '.pb-title{flex:1;pointer-events:none}',
       '.pb-min{cursor:pointer;border:none;background:rgba(255,255,255,.08);color:#e8e8f0;',
       'width:20px;height:20px;border-radius:6px;line-height:1;font-size:12px}',
-      '.pb-body{padding:2px 10px 8px;display:grid;gap:6px}',
+      '.pb-body{padding:2px 10px 8px;display:grid;gap:6px;max-height:calc(100vh - 120px);overflow-y:auto;overscroll-behavior:contain}',
+      '.pb-sec{border-top:1px solid rgba(255,255,255,.08)}',
+      '.pb-sechd{display:flex;align-items:center;justify-content:space-between;padding:7px 10px 3px;cursor:pointer;font-weight:700;font-size:12px;color:#b8b8d0;user-select:none}',
+      '.pb-sechd:hover{color:#fff}',
+      '.pb-arr{font-style:normal;font-size:10px}',
+      '.pb-seccb{display:grid;gap:6px;padding:2px 10px 8px}',
       '.pb-toggle{width:100%;padding:8px;border:none;border-radius:8px;font-weight:800;font-size:13px;',
       'cursor:pointer;background:#2fae4f;color:#fff}',
       '.pb-toggle.on{background:#d64545}',
@@ -969,30 +974,65 @@ function PB_AFK_CORE() {
 
     body.appendChild(toggleBtn);
     body.appendChild(statusEl);
-    body.appendChild(selRow('绕圈方向', 'dir', [['cw', '顺时针 ↻'], ['ccw', '逆时针 ↺']]));
-    body.appendChild(numRow('圈大小(ms/步)', 'phaseMs', 80, 3000, 10));
-    body.appendChild(selRow('空格攻击', 'spaceMode', [['tap', '点按'], ['hold', '长按'], ['off', '关']]));
-    body.appendChild(numRow('空格间隔', 'spaceEvery', 100, 5000, 50));
-    body.appendChild(selRow('Shift 技能', 'shiftMode', [['tap', '点按'], ['hold', '长按'], ['off', '关']]));
-    body.appendChild(numRow('Shift间隔', 'shiftEvery', 300, 10000, 50));
-    body.appendChild(selRow('大招 R', 'ultMode', [['tap', '有就放'], ['hold', '长按'], ['off', '关']]));
-    body.appendChild(numRow('R间隔', 'ultEvery', 200, 10000, 50));
-    body.appendChild(selRow('交互 E', 'interactMode', [['tap', '点按'], ['off', '关']]));
-    body.appendChild(numRow('E间隔', 'interactEvery', 150, 5000, 50));
-    body.appendChild(checkRow('优先追捕虚弱精灵', 'catchPriority'));
-    body.appendChild(selRow('自动寻路点位', 'navMode', [['safe', '开启(按下方多选)'], ['off', '关']]));
-    navListEl = document.createElement('div');
-    navListEl.className = 'pb-navlist';
-    body.appendChild(navListEl);
-    renderNavList();
-    body.appendChild(selRow('弹窗选择', 'pickMode', [['quality', '品质优先'], ['index', '按序号']]));
-    body.appendChild(selRow('弹窗选第几项', 'interactPick', [['1', '第 1 项'], ['2', '第 2 项'], ['3', '第 3 项'], ['4', '第 4 项']]));
-    body.appendChild(checkRow('自动关闭暂停(点继续)', 'autoUnpause'));
-    body.appendChild(checkRow('结算后自动再来一次', 'autoRestart'));
-    body.appendChild(checkRow('断线自动点重试', 'autoReconnect'));
-    body.appendChild(checkRow('选择日志提示', 'pickLog'));
-    body.appendChild(checkRow('自动选升级(第1项)', 'autoPick'));
-    body.appendChild(checkRow('后台保活音(近无声)', 'keepAlive'));
+
+    // 分组折叠布局：避免配置项过多溢出屏幕，每组可独立展开/收起
+    var GROUPS = [
+      { key: 'atk', name: '移动与攻击', defOpen: true, build: function (b) {
+        b.appendChild(selRow('绕圈方向', 'dir', [['cw', '顺时针 ↻'], ['ccw', '逆时针 ↺']]));
+        b.appendChild(numRow('圈大小(ms/步)', 'phaseMs', 80, 3000, 10));
+        b.appendChild(selRow('空格攻击', 'spaceMode', [['tap', '点按'], ['hold', '长按'], ['off', '关']]));
+        b.appendChild(numRow('空格间隔', 'spaceEvery', 100, 5000, 50));
+        b.appendChild(selRow('Shift 技能', 'shiftMode', [['tap', '点按'], ['hold', '长按'], ['off', '关']]));
+        b.appendChild(numRow('Shift间隔', 'shiftEvery', 300, 10000, 50));
+        b.appendChild(selRow('大招 R', 'ultMode', [['tap', '有就放'], ['hold', '长按'], ['off', '关']]));
+        b.appendChild(numRow('R间隔', 'ultEvery', 200, 10000, 50));
+      } },
+      { key: 'inter', name: '交互 · 捕捉 · 寻路', defOpen: true, build: function (b) {
+        b.appendChild(selRow('交互 E', 'interactMode', [['tap', '点按'], ['off', '关']]));
+        b.appendChild(numRow('E间隔', 'interactEvery', 150, 5000, 50));
+        b.appendChild(checkRow('优先追捕虚弱精灵', 'catchPriority'));
+        b.appendChild(selRow('自动寻路点位', 'navMode', [['safe', '开启(按下方多选)'], ['off', '关']]));
+        navListEl = document.createElement('div');
+        navListEl.className = 'pb-navlist';
+        b.appendChild(navListEl);
+        renderNavList();
+      } },
+      { key: 'auto', name: '弹窗与自动化', defOpen: false, build: function (b) {
+        b.appendChild(selRow('弹窗选择', 'pickMode', [['quality', '品质优先'], ['index', '按序号']]));
+        b.appendChild(selRow('弹窗选第几项', 'interactPick', [['1', '第 1 项'], ['2', '第 2 项'], ['3', '第 3 项'], ['4', '第 4 项']]));
+        b.appendChild(checkRow('自动选升级(第1项)', 'autoPick'));
+        b.appendChild(checkRow('自动关闭暂停(点继续)', 'autoUnpause'));
+        b.appendChild(checkRow('结算后自动再来一次', 'autoRestart'));
+        b.appendChild(checkRow('断线自动点重试', 'autoReconnect'));
+        b.appendChild(checkRow('选择日志提示', 'pickLog'));
+        b.appendChild(checkRow('后台保活音(近无声)', 'keepAlive'));
+      } }
+    ];
+    var uiGroup = settings.uiGroup || {};
+    GROUPS.forEach(function (g) {
+      var sec = document.createElement('div'); sec.className = 'pb-sec';
+      var hd = document.createElement('div'); hd.className = 'pb-sechd';
+      var nm = document.createElement('span'); nm.textContent = g.name;
+      var arr = document.createElement('i'); arr.className = 'pb-arr';
+      hd.appendChild(nm); hd.appendChild(arr);
+      var cnt = document.createElement('div'); cnt.className = 'pb-seccb';
+      g.build(cnt);
+      var open = uiGroup[g.key] !== undefined ? !!uiGroup[g.key] : !!g.defOpen;
+      function apply() {
+        cnt.style.display = open ? '' : 'none';
+        arr.textContent = open ? '▾' : '▸';
+      }
+      hd.addEventListener('click', function () {
+        open = !open;
+        uiGroup[g.key] = open;
+        save();
+        apply();
+      });
+      apply();
+      sec.appendChild(hd);
+      sec.appendChild(cnt);
+      body.appendChild(sec);
+    });
 
     var tip = document.createElement('div'); tip.className = 'pb-tip';
     tip.textContent = 'F8 启停 · F9 显隐面板 · 仅 pokebonk.com 生效';
