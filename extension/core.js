@@ -484,13 +484,21 @@ function PB_AFK_CORE() {
     }
     inCasino = false;
 
-    // 0.5) 商店类弹窗（引梦貘人忘招商店等，带"就绪"退出按钮）→ 自动点"就绪"关闭，
-    //      否则导航走到这里会被弹窗卡死出不去
+    // 0.5) 已知"只有退出键"的弹窗 → 自动点退出（合成 Esc 对这些弹窗无效）：
+    //      a) 商店类（引梦貘人忘招商店等，.shop-exit"就绪"）
+    //      b) 融合机器（正辉的机器，.fu-actions"以后再说"，Esc 标注但合成无效）
     var shopExit = null;
     try { shopExit = modal.querySelector('.shop-exit'); } catch (e) {}
     if (shopExit) {
       pbToastOnce('shopExit', 5000, '🛍 商店弹窗，已自动点"就绪"关闭', '#ffc83a');
       try { shopExit.click(); } catch (e) {}
+      return;
+    }
+    var laterBtn = null;
+    try { laterBtn = modal.querySelector('.fu-actions .btn'); } catch (e) {}
+    if (laterBtn && /以后再说|más tarde|later/i.test((laterBtn.textContent || '').trim())) {
+      pbToastOnce('fuExit', 5000, '🔬 融合机器弹窗，已自动点"以后再说"', '#a35cff');
+      try { laterBtn.click(); } catch (e) {}
       return;
     }
 
