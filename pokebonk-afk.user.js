@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      1.9.3
+// @version      1.9.4
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -22,6 +22,7 @@
  * ============================================================ */
 function PB_AFK_CORE() {
   'use strict';
+  var PB_AFK_VERSION = '1.9.4'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
   if (window.__PB_AFK_ACTIVE__) return;
   window.__PB_AFK_ACTIVE__ = true;
 
@@ -482,41 +483,47 @@ function PB_AFK_CORE() {
     if (!modals.length) { watcherRetry = 0; pickRetry = 0; inCasino = false; return; }
     var modal = modals[modals.length - 1];
 
-    // 0) 赌场/老虎机界面（.sl-* 专属类名）→ 停按 E（E 会触发抽奖烧钱），
-    //    自动点"离开"退出（Esc 在该界面无效）。此步优先级最高。
-    var casinoEl = null;
-    try { casinoEl = modal.querySelector('.sl-cab, .sl-lever, .sl-logo, .sl-window'); } catch (e) {}
-    if (casinoEl) {
-      inCasino = true;
-      pbToastOnce('casino', 10000, '🎰 检测到赌场，自动离开（停按 E 防抽奖）', '#e94756');
-      var cbtns = modal.querySelectorAll('button');
-      for (var ci = 0; ci < cbtns.length; ci++) {
-        var ct = (cbtns[ci].textContent || '').trim();
-        if (ct === '离开' || ct === '離開' || /^(salir|leave|exit)$/i.test(ct)) {
-          try { cbtns[ci].click(); } catch (e) {}
-          break;
+    // 0) 已知"只有退出键"的弹窗 → 自动点退出（合成 Esc 对这些弹窗无效）。
+    //    遍历所有 .modal（多个弹窗共存时不再只看最后一个，避免选错元素漏处理）：
+    //    a) 赌场/老虎机（.sl-*）→ 停按 E（防抽奖烧钱）+ 点"离开"
+    //    b) 商店类（引梦貘人忘招商店等，.shop-exit"就绪"）
+    //    c) 融合机器（正辉的机器，.fu-actions"以后再说"，Esc 标注但合成无效）
+    var mi, mEl;
+    for (mi = 0; mi < modals.length; mi++) {
+      mEl = modals[mi];
+      var casinoEl = null;
+      try { casinoEl = mEl.querySelector('.sl-cab, .sl-lever, .sl-logo, .sl-window'); } catch (e) {}
+      if (casinoEl) {
+        inCasino = true;
+        pbToastOnce('casino', 10000, '🎰 检测到赌场，自动离开（停按 E 防抽奖）', '#e94756');
+        var cbtns = mEl.querySelectorAll('button');
+        for (var ci = 0; ci < cbtns.length; ci++) {
+          var ct = (cbtns[ci].textContent || '').trim();
+          if (ct === '离开' || ct === '離開' || /^(salir|leave|exit)$/i.test(ct)) {
+            try { cbtns[ci].click(); } catch (e) {}
+            break;
+          }
         }
+        return;
       }
-      return;
+      var shopExit = null;
+      try { shopExit = mEl.querySelector('.shop-exit'); } catch (e) {}
+      if (shopExit) {
+        pbToastOnce('shopExit', 5000, '🛍 商店弹窗，已自动点"就绪"关闭', '#ffc83a');
+        try { shopExit.click(); } catch (e) {}
+        return;
+      }
+      var laterBtn = null;
+      try { laterBtn = mEl.querySelector('.fu-actions .btn'); } catch (e) {}
+      if (laterBtn && /以后再说|más tarde|later/i.test((laterBtn.textContent || '').trim())) {
+        pbToastOnce('fuExit', 5000, '🔬 融合机器弹窗，已自动点"以后再说"', '#a35cff');
+        try { laterBtn.click(); } catch (e) {}
+        return;
+      }
     }
     inCasino = false;
-
-    // 0.5) 已知"只有退出键"的弹窗 → 自动点退出（合成 Esc 对这些弹窗无效）：
-    //      a) 商店类（引梦貘人忘招商店等，.shop-exit"就绪"）
-    //      b) 融合机器（正辉的机器，.fu-actions"以后再说"，Esc 标注但合成无效）
-    var shopExit = null;
-    try { shopExit = modal.querySelector('.shop-exit'); } catch (e) {}
-    if (shopExit) {
-      pbToastOnce('shopExit', 5000, '🛍 商店弹窗，已自动点"就绪"关闭', '#ffc83a');
-      try { shopExit.click(); } catch (e) {}
-      return;
-    }
-    var laterBtn = null;
-    try { laterBtn = modal.querySelector('.fu-actions .btn'); } catch (e) {}
-    if (laterBtn && /以后再说|más tarde|later/i.test((laterBtn.textContent || '').trim())) {
-      pbToastOnce('fuExit', 5000, '🔬 融合机器弹窗，已自动点"以后再说"', '#a35cff');
-      try { laterBtn.click(); } catch (e) {}
-      return;
+    for (mi = 0; mi < modals.length; mi++) {
+      try { if (modals[mi].querySelector('.sl-cab, .sl-lever, .sl-logo, .sl-window')) { inCasino = true; break; } } catch (e) {}
     }
 
     // 1) 选择弹窗（升级三选一 / 百变怪复制 / 祭坛祝福等 cards 卡片）→ 自动选：
@@ -1135,7 +1142,7 @@ function PB_AFK_CORE() {
     });
 
     var tip = document.createElement('div'); tip.className = 'pb-tip';
-    tip.textContent = 'F8 启停 · F9 显隐面板 · 仅 pokebonk.com 生效';
+    tip.textContent = 'v' + PB_AFK_VERSION + ' · F8 启停 · F9 显隐面板 · 仅 pokebonk.com 生效';
 
     panelEl.appendChild(head); panelEl.appendChild(body); panelEl.appendChild(tip);
     document.body.appendChild(panelEl);
@@ -1191,7 +1198,7 @@ function PB_AFK_CORE() {
     setTimeout(function () { try { startAutomation(); } catch (e) {} }, 1500);
   }
 
-  console.log('%c[PokéBonk AFK]%c 已加载 · F8 启停 · F9 面板显隐',
+  console.log('%c[PokéBonk AFK]%c v' + PB_AFK_VERSION + ' 已加载 · F8 启停 · F9 面板显隐',
     'color:#3fd769;font-weight:bold', '');
 
   // 控制句柄：可在控制台用 __PBAFK__.start() / .stop() / .toggle() 直接操作
