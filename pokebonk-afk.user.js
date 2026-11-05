@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      2.2.3
+// @version      2.2.4
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -22,7 +22,7 @@
  * ============================================================ */
 function PB_AFK_CORE() {
   'use strict';
-  var PB_AFK_VERSION = '2.2.3'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
+  var PB_AFK_VERSION = '2.2.4'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
   if (window.__PB_AFK_ACTIVE__) return;
   window.__PB_AFK_ACTIVE__ = true;
 
@@ -350,6 +350,11 @@ function PB_AFK_CORE() {
   var catchMode = false, lastCatchSeen = 0, wasCatchMode = false;
   var catchDir = null, catchDist = '';
   var compassVisibleStreak = 0; // 罗盘连续可见计数（防游戏帧重置 display 的竞态误判）
+  var catchMemory = null; // 罗盘消失后的延续追捕记忆 {dir, distLeft, at}
+  function parseMeters(txt) { // "48 米"/"48m" → 48；解析失败返回 999（视为很远，走满 10s）
+    var m = String(txt || '').match(/(\d+(?:\.\d+)?)/);
+    return m ? parseFloat(m[1]) : 999;
+  }
   // 弹簧绕圈（circleMode='spring'）：绕圈相位加权漂移——漂移方向的相位时长 ×2.5、
   // 相反方向 ×0.4，圈心缓慢朝漂移方向移动扫图；漂移方向每 12s 轮换，
   // 小地图画面静止（卡墙）×2 次立即轮换。导航/追捕接管时冻结相位。
@@ -854,7 +859,26 @@ function PB_AFK_CORE() {
       }
     }
     // 停攻击仅针对"已虚弱等球"的罗盘追捕（防误杀其他怪）；小地图追捕继续攻击（打残目标触发 weakened）
-    catchMode = settings.catchPriority && (now - lastCatchSeen < 1500) && catchDirActive;
+    catchMode = settings.catchPriority && catchDirActive;
+    if (catchMode) {
+      // 罗盘可见时：记录最后方向与剩余距离（"48 米" → 米数），供信号消失后延续追捕
+      catchMemory = { dir: catchDir, distLeft: parseMeters(catchDist), at: now };
+    } else if (catchMemory && settings.catchPriority && now - catchMemory.at < 10000 && catchMemory.distLeft > 2) {
+      // 罗盘消失（目标进入屏幕后 HUD 常会消失）：沿最后方向延续追捕，最长 10 秒或剩余距离走完；
+      // 期间若 prompt"[E] 投掷精灵球"亮起（真正进入 E 范围）会在 E 分支处理
+      var movedM = (now - catchMemory.at) / 1000 * 6; // 估算速度 6m/s
+      if (movedM < catchMemory.distLeft) {
+        catchDir = catchMemory.dir;
+        catchDist = Math.max(1, Math.round(catchMemory.distLeft - movedM)) + '米(延续)';
+        catchMode = true;
+        catchSource = 'memory';
+        pbToastOnce('catchMemory', 4000, '🎯 HUD 消失，按最后方向延续追捕（' + catchDist + '）', '#36c96a');
+      } else {
+        catchMemory = null; // 距离走完仍未捕获 → 放弃
+      }
+    } else if (catchMemory && (now - catchMemory.at >= 10000)) {
+      catchMemory = null; // 10 秒超时放弃
+    }
     if (catchMode && !wasCatchMode) pbToastOnce('catchEnter', 3000, '🎯 发现可捕捉目标，追捕中' + (catchDist ? '（' + catchDist + '）' : '') + (catchSource === 'mm' ? ' · 保持攻击打残它' : ''), '#36c96a');
     if (!catchMode && wasCatchMode) pbToastOnce('catchExit', 3000, '捕捉结束，恢复转圈策略', '#3fd769');
     wasCatchMode = catchMode;
@@ -910,8 +934,9 @@ function PB_AFK_CORE() {
       if (pinDir.s) want.add(KEY.s.code);
       if (pinDir.a) want.add(KEY.a.code);
       if (pinDir.d) want.add(KEY.d.code);
-    } else if (catchMode && catchDirActive && catchDir) {
-      // 追捕模式：按罗盘方位走向虚弱精灵（覆盖绕圈），停攻击防误杀
+    } else if (catchMode && catchDir) {
+      // 追捕模式：按罗盘方位走向虚弱精灵（覆盖绕圈）；
+      // 延续追捕（memory）时沿最后方向走，不停攻击（打残触发虚弱）
       if (catchDir.w) want.add(KEY.w.code);
       if (catchDir.s) want.add(KEY.s.code);
       if (catchDir.a) want.add(KEY.a.code);
