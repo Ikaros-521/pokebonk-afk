@@ -22,6 +22,7 @@ function PB_AFK_CORE() {
     interactPick: 1,                                    // 交互弹窗选第几项（1-4；没有该项则兜底 1 → Esc）
     pickMode: 'quality',                                // 弹窗选择：quality=品质最高优先 / index=按序号
     pickLog: true,                                      // 自动选择时在屏幕上短暂提示选了什么
+    circleMode: 'spring',                               // 绕圈模式：spring=弹簧前进扫图 / circle=原地闭合圆
     catchPriority: true,                                // 有等待捕捉的虚弱精灵时：停攻击、按罗盘方位追过去、E 扔球
     navMode: 'safe',                                    // 自动寻路：safe=走向安全可交互点(按下方多选+优先级) / off=关
     navItems: { altar: true, freechest: true, meowth: true, challenge: true, shrine: true, trick: true, ditto: true, magnet: true, snorlax: true, berry: true, hypno: false },
@@ -326,6 +327,39 @@ function PB_AFK_CORE() {
   var CATCH_COLOR = '#5af0ff';
   var catchMode = false, lastCatchSeen = 0, wasCatchMode = false;
   var catchDir = null, catchDist = '';
+  // 弹簧绕圈（circleMode='spring'）：绕圈相位加权漂移——漂移方向的相位时长 ×2.5、
+  // 相反方向 ×0.4，圈心缓慢朝漂移方向移动扫图；漂移方向每 12s 轮换，
+  // 小地图画面静止（卡墙）×2 次立即轮换。导航/追捕接管时冻结相位。
+  var DRIFT_PERIOD = 12000;
+  var DRIFT_AXES = ['n', 'e', 's', 'w'];
+  var DRIFT_NAMES = { n: '上', e: '右', s: '下', w: '左' };
+  var driftIdx = 0, lastDriftChange = 0, wallHits = 0, lastWallCheck = 0, lastChecksum = -1;
+  var springPhase = 0, lastPhaseAt = 0, curPhaseDur = 1000;
+  var driftNameNow = '';
+  function phaseAxis(phase, ccw) {
+    var ccwA = ['n', 'nw', 'w', 'sw', 's', 'se', 'e', 'ne'];
+    var cwA = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'];
+    return (ccw ? ccwA : cwA)[phase % 8];
+  }
+  var OPPOSITE = { n: 's', s: 'n', e: 'w', w: 'e' };
+  function phaseWeight(phase, driftAxis, ccw) {
+    var axis = phaseAxis(phase, ccw);
+    if (axis === driftAxis) return 2.5;
+    if (axis === OPPOSITE[driftAxis]) return 0.4;
+    return 1;
+  }
+  function mmChecksum() { // 小地图左上象限校验和（避玩家中心）：静止=同值，移动=变值
+    try {
+      var mm = document.querySelector('.minimap');
+      if (!mm || !mm.getContext) return -1;
+      var ctx = mm.getContext('2d');
+      if (!ctx) return -1;
+      var d = ctx.getImageData(60, 60, 120, 120).data;
+      var sum = 0;
+      for (var i = 0; i < d.length; i += 397) sum = (sum + d[i] + d[i + 1] + d[i + 2]) % 100000007;
+      return sum;
+    } catch (e) { return -1; }
+  }
   // 地图标记追踪：玩家在 Tab 大地图点击放置的标记（最多 3 个）会生成 .compass.mkpin
   // DOM 元素（dataset.k=点位类型、.cp-tip rotate=方位、.cp-d=距离），4 米内自动清除。
   // 有标记时最高优先级响应：按方位走过去（用户手动放的标记=明确意图，类型不设限，
@@ -730,8 +764,44 @@ function PB_AFK_CORE() {
 
 
     var seq = settings.dir === 'ccw' ? SEQ_CCW : SEQ_CW;
-    var phaseMs = Math.max(80, num(settings.phaseMs, 1000));
-    var phase = Math.floor((now - startedAt) / phaseMs) % seq.length;
+    var basePhaseMs = Math.max(80, num(settings.phaseMs, 1000));
+    var springActive = settings.circleMode === 'spring';
+
+    // ---- 弹簧绕圈：漂移方向相位加权（同向 ×2.5 / 反向 ×0.4 → 圈心缓慢漂移扫图），
+    //      卡墙检测（小地图画面 0.8s 无变化×2 次 = 顶着墙）→ 自动轮换漂移方向；
+    //      12s 无卡墙也定期轮换；导航/追捕/标记接管时冻结相位推进。 ----
+    var DRIFT_AXES = ['n', 'e', 's', 'w'];
+    var DRIFT_NAMES = { n: '上', e: '右', s: '下', w: '左' };
+    if (springActive) {
+      if (now - lastDriftChange > DRIFT_PERIOD) {
+        driftIdx = (driftIdx + 1) % 4;
+        lastDriftChange = now;
+        wallHits = 0;
+      }
+      if (now - lastWallCheck > 800) {
+        lastWallCheck = now;
+        var sum = mmChecksum();
+        if (sum >= 0) {
+          if (sum === lastChecksum) wallHits++; else wallHits = 0;
+          lastChecksum = sum;
+          if (wallHits >= 2) {
+            driftIdx = (driftIdx + 1) % 4;
+            wallHits = 0;
+            lastDriftChange = now;
+            pbToastOnce('wall' + driftIdx + Math.floor(now / 30000), 8000, '🧱 疑似碰壁，弹簧漂移已转向' + DRIFT_NAMES[DRIFT_AXES[driftIdx]], '#a35cff');
+          }
+        }
+      }
+      // 导航/追捕/标记接管移动时冻结相位推进（恢复后从原相位继续）
+      if (pinActive || catchMode || navActive) lastPhaseAt = now;
+      else if (now - lastPhaseAt >= curPhaseDur) {
+        lastPhaseAt += curPhaseDur;
+        springPhase = (springPhase + 1) % 8;
+        curPhaseDur = basePhaseMs * phaseWeight(springPhase, DRIFT_AXES[driftIdx], settings.dir === 'ccw');
+      }
+    }
+    var phase = springActive ? springPhase : Math.floor((now - startedAt) / basePhaseMs) % seq.length;
+    var phaseMs = springActive ? curPhaseDur : basePhaseMs;
 
     var want = new Set();
     if (pinActive && pinDir) {
@@ -838,6 +908,9 @@ function PB_AFK_CORE() {
     settings.enabled = true; save();
     startedAt = performance.now();
     lastTick = 0; lastSpace = 0; lastShift = 0; lastUlt = 0; pickRetry = 0; watcherRetry = 0;
+    // 弹簧相位重置（从当前相位重新开始）
+    springPhase = 0; lastPhaseAt = performance.now(); curPhaseDur = Math.max(80, num(settings.phaseMs, 1000));
+    wallHits = 0; lastChecksum = -1; lastWallCheck = 0;
     controllerTick = tick;
     try { if (settings.keepAlive) startKeepAlive(); } catch (e) {}
     try { syncWorker(); } catch (e) {}
@@ -887,6 +960,7 @@ function PB_AFK_CORE() {
     if (!statusEl) return;
     var txt = settings.enabled
       ? '运行中 · ' + (settings.dir === 'ccw' ? '逆时针' : '顺时针') +
+        (settings.circleMode === 'spring' ? ' · 🌀弹簧(' + (DRIFT_NAMES[DRIFT_AXES[driftIdx]] || '') + '漂)' : ' · 闭合圆') +
         ' · 空格' + modeText(settings.spaceMode) + ' · Shift' + modeText(settings.shiftMode) +
         (settings.ultMode === 'off' ? '' : ' · R有就放') +
         (settings.interactMode === 'off' ? '' : ' · E拾取') +
@@ -1068,6 +1142,7 @@ function PB_AFK_CORE() {
     // 分组折叠布局：避免配置项过多溢出屏幕，每组可独立展开/收起
     var GROUPS = [
       { key: 'atk', name: '移动与攻击', defOpen: true, build: function (b) {
+        b.appendChild(selRow('绕圈模式', 'circleMode', [['spring', '弹簧前进(扫图)'], ['circle', '原地闭合圆']]));
         b.appendChild(selRow('绕圈方向', 'dir', [['cw', '顺时针 ↻'], ['ccw', '逆时针 ↺']]));
         b.appendChild(numRow('圈大小(ms/步)', 'phaseMs', 80, 3000, 10));
         b.appendChild(selRow('空格攻击', 'spaceMode', [['tap', '点按'], ['hold', '长按'], ['off', '关']]));
