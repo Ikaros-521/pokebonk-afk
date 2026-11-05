@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      2.2.4
+// @version      2.3.0
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -22,7 +22,7 @@
  * ============================================================ */
 function PB_AFK_CORE() {
   'use strict';
-  var PB_AFK_VERSION = '2.2.4'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
+  var PB_AFK_VERSION = '2.3.0'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
   if (window.__PB_AFK_ACTIVE__) return;
   window.__PB_AFK_ACTIVE__ = true;
 
@@ -706,6 +706,12 @@ function PB_AFK_CORE() {
     if (now - lastTick < 40) return;
     lastTick = now;
 
+    // ---- 手动接管：用户按着 WASD/空格/Shift 期间，脚本不派发任何按键 ----
+    if (manualOverride()) {
+      updateStatus();
+      return;
+    }
+
     // ---- 自动寻路检测：多选点位按优先级排队，可见即导航 ----
     var navActive = false, navDir = null, navText = '';
     if (settings.navMode === 'safe') {
@@ -1079,6 +1085,30 @@ function PB_AFK_CORE() {
     }
   }, true);
 
+  // 手动接管检测：用户真实按住 WASD（isTrusted，合成事件不算）→ 挂机让路；
+  // 松开 2.5 秒后自动恢复转圈。期间弹窗守护器/选卡照常工作，只暂停移动/攻击按键。
+  var MANUAL_KEYS = { KeyW: 1, KeyA: 1, KeyS: 1, KeyD: 1, Space: 1, ShiftLeft: 1, ShiftRight: 1 };
+  var manualHeld = new Set();
+  var manualLastAt = 0;
+  window.addEventListener('keydown', function (e) {
+    if (!e.isTrusted || !MANUAL_KEYS[e.code]) return;
+    if (manualHeld.size === 0 && settings.enabled) {
+      releaseAll(); // 立即松开脚本按住的键，避免和手动操作打架
+      pbToastOnce('manual', 5000, '✋ 检测到手动操作，挂机移动已暂停', '#ffc83a');
+    }
+    manualHeld.add(e.code);
+    manualLastAt = performance.now();
+  }, true);
+  window.addEventListener('keyup', function (e) {
+    if (!e.isTrusted || !MANUAL_KEYS[e.code]) return;
+    manualHeld.delete(e.code);
+    manualLastAt = performance.now();
+  }, true);
+  window.addEventListener('blur', function () { manualHeld.clear(); }, true);
+  function manualOverride() {
+    return manualHeld.size > 0 || (performance.now() - manualLastAt < 2500);
+  }
+
   /* ---------------- 7. 控制面板 UI ---------------- */
   var panelEl, statusEl, dotEl, toggleBtn;
   var lastStatusText = '';
@@ -1088,14 +1118,15 @@ function PB_AFK_CORE() {
   function updateStatus() {
     if (!statusEl) return;
     var txt = settings.enabled
-      ? '运行中 · ' + (settings.dir === 'ccw' ? '逆时针' : '顺时针') +
+      ? (manualOverride() ? '✋ 手动接管中（松开按键 2.5 秒后恢复挂机）' :
+        '运行中 · ' + (settings.dir === 'ccw' ? '逆时针' : '顺时针') +
         (settings.circleMode === 'spring' ? ' · 🌀弹簧(' + (DRIFT_NAMES[DRIFT_AXES[driftIdx]] || '') + '漂)' : ' · 闭合圆') +
         ' · 空格' + modeText(settings.spaceMode) + ' · Shift' + modeText(settings.shiftMode) +
         (settings.ultMode === 'off' ? '' : ' · R有就放') +
         (settings.interactMode === 'off' ? '' : ' · E拾取') +
         (pinActive ? ' · 📍标记:' + (pinKind || '') + (pinDist || '') : '') +
         (catchMode ? ' · 🎯追捕' + (catchSource === 'mm' ? '(小地图)' : '') + (catchDist || '') : '') +
-        (navActiveState ? ' · 🧭寻路:' + navTextState : '')
+        (navActiveState ? ' · 🧭寻路:' + navTextState : ''))
       : '已停止 · 按 F8 或点按钮启动';
     if (txt !== lastStatusText) { lastStatusText = txt; statusEl.textContent = txt; }
     if (dotEl) dotEl.className = 'pb-dot' + (settings.enabled ? ' on' : '');
