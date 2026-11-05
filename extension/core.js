@@ -5,7 +5,7 @@
  * ============================================================ */
 function PB_AFK_CORE() {
   'use strict';
-  var PB_AFK_VERSION = '2.2.1'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
+  var PB_AFK_VERSION = '2.2.2'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
   if (window.__PB_AFK_ACTIVE__) return;
   window.__PB_AFK_ACTIVE__ = true;
 
@@ -330,6 +330,7 @@ function PB_AFK_CORE() {
   var CATCH_COLOR = '#5af0ff';
   var catchMode = false, lastCatchSeen = 0, wasCatchMode = false;
   var catchDir = null, catchDist = '';
+  var compassVisibleStreak = 0; // 罗盘连续可见计数（防游戏帧重置 display 的竞态误判）
   // 弹簧绕圈（circleMode='spring'）：绕圈相位加权漂移——漂移方向的相位时长 ×2.5、
   // 相反方向 ×0.4，圈心缓慢朝漂移方向移动扫图；漂移方向每 12s 轮换，
   // 小地图画面静止（卡墙）×2 次立即轮换。导航/追捕接管时冻结相位。
@@ -351,44 +352,29 @@ function PB_AFK_CORE() {
     if (axis === OPPOSITE[driftAxis]) return 0.4;
     return 1;
   }
-  function mmChecksum() { // 小地图左上象限校验和（避玩家中心）：静止=同值，移动=变值
+  function mmChecksum() { // 小地图静止检测：多区域采样 + 加权哈希（避免求和碰撞误判"静止"）
     try {
       var mm = document.querySelector('.minimap');
       if (!mm || !mm.getContext) return -1;
       var ctx = mm.getContext('2d');
       if (!ctx) return -1;
-      var d = ctx.getImageData(60, 60, 120, 120).data;
-      var sum = 0;
-      for (var i = 0; i < d.length; i += 397) sum = (sum + d[i] + d[i + 1] + d[i + 2]) % 100000007;
-      return sum;
-    } catch (e) { return -1; }
-  }
-  // 小地图上找可捕捉目标：R.Capture 敌人画为"精灵头像 + 青色 #5af0ff 环"（超范围钳到边缘），
-  // 青色在小地图上独一无二 → 扫描青色像素簇 = 目标方位（玩家恒在小地图中心 200,200，比例 200px=60m）
-  function mmFindCapture() {
-    try {
-      var mm = document.querySelector('.minimap');
-      if (!mm || !mm.getContext) return null;
-      var ctx = mm.getContext('2d');
-      if (!ctx) return null;
       var W = mm.width || 400;
-      var d = ctx.getImageData(0, 0, W, W).data;
-      var sx = 0, sy = 0, cnt = 0;
-      for (var y = 0; y < W; y += 2) {
-        for (var x = 0; x < W; x += 2) {
-          var i = (y * W + x) * 4;
-          var r = d[i], g = d[i + 1], b = d[i + 2];
-          if (r > 50 && r < 140 && g > 210 && b > 220) { sx += x; sy += y; cnt++; } // 青色 #5af0ff 容差
+      // 采样 4 个角区域（避开中心玩家图标），每区域 40x40
+      var h = 2166136261; // FNV 偏移基数
+      var regions = [[40, 40], [W - 80, 40], [40, W - 80], [W - 80, W - 80]];
+      for (var r = 0; r < 4; r++) {
+        var d = ctx.getImageData(regions[r][0], regions[r][1], 40, 40).data;
+        for (var i = 0; i < d.length; i += 61) {
+          h = (h ^ (d[i] + (d[i + 1] << 8) + (d[i + 2] << 16) + r * 131)) >>> 0;
+          h = (h * 16777619) >>> 0; // FNV 素数乘
         }
       }
-      if (cnt < 6) return null; // 像素太少 = 没有捕捉目标图标
-      var mx = sx / cnt, my = sy / cnt;
-      var dx = mx - W / 2, dy = my - W / 2;
-      var distM = Math.round(Math.hypot(dx, dy) * 60 / (W / 2)); // px → 米
-      var deg = Math.atan2(dy, dx) * 180 / Math.PI;
-      return { deg: deg, dist: distM };
-    } catch (e) { return null; }
+      return h;
+    } catch (e) { return -1; }
   }
+  // 捕捉检测只信罗盘（.compass dataset.k capture 色 = 游戏官方判定的可捕捉信号，零误判）。
+  // 小地图 canvas 像素识别方案已移除——画面高光/白点会误判，用户实测不可靠。
+  function mmFindCapture() { return null; }
   // 地图标记追踪：玩家在 Tab 大地图点击放置的标记（最多 3 个）会生成 .compass.mkpin
   // DOM 元素（dataset.k=点位类型、.cp-tip rotate=方位、.cp-d=距离），4 米内自动清除。
   // 有标记时最高优先级响应：按方位走过去（用户手动放的标记=明确意图，类型不设限，
@@ -806,15 +792,20 @@ function PB_AFK_CORE() {
       if (comp && comp.style.display !== 'none' &&
           typeof comp.dataset.k === 'string' &&
           comp.dataset.k.lastIndexOf(CATCH_COLOR) === comp.dataset.k.length - CATCH_COLOR.length) {
-        var tip = comp.querySelector('.cp-tip');
-        var rot = parseFloat((tip && tip.style.transform || '').replace('rotate(', '').replace('rad)', ''));
-        if (isFinite(rot)) {
-          var dir = dirFromAngle((rot - Math.PI / 2) * 180 / Math.PI);
-          var dEl = comp.querySelector('.cp-d');
-          catchDir = dir; catchDist = (dEl ? dEl.textContent : '').trim();
-          catchDirActive = true; catchSource = 'compass';
-          lastCatchSeen = now;
+        compassVisibleStreak++; // 连续可见计数：游戏帧会闪断重置 display，单次可见是竞态噪声
+        if (compassVisibleStreak >= 2) {
+          var tip = comp.querySelector('.cp-tip');
+          var rot = parseFloat((tip && tip.style.transform || '').replace('rotate(', '').replace('rad)', ''));
+          if (isFinite(rot)) {
+            var dir = dirFromAngle((rot - Math.PI / 2) * 180 / Math.PI);
+            var dEl = comp.querySelector('.cp-d');
+            catchDir = dir; catchDist = (dEl ? dEl.textContent : '').trim();
+            catchDirActive = true; catchSource = 'compass';
+            lastCatchSeen = now;
+          }
         }
+      } else {
+        compassVisibleStreak = 0;
       }
     } catch (e) {}
     if (!catchDirActive && settings.catchPriority) { // 罗盘无信号 → 小地图找青色捕捉环
@@ -850,15 +841,18 @@ function PB_AFK_CORE() {
       }
       if (now - lastWallCheck > 800) {
         lastWallCheck = now;
-        var sum = mmChecksum();
-        if (sum >= 0) {
-          if (sum === lastChecksum) wallHits++; else wallHits = 0;
-          lastChecksum = sum;
-          if (wallHits >= 2) {
-            driftIdx = (driftIdx + 1) % 4;
-            wallHits = 0;
-            lastDriftChange = now;
-            pbToastOnce('wall' + driftIdx + Math.floor(now / 30000), 8000, '🧱 疑似碰壁，弹簧漂移已转向' + DRIFT_NAMES[DRIFT_AXES[driftIdx]], '#a35cff');
+        // 转向后 3s 冷却：贴新方向正常移动的画面变化期不判墙
+        if (now - lastDriftChange > 3000) {
+          var sum = mmChecksum();
+          if (sum >= 0) {
+            if (sum === lastChecksum) wallHits++; else wallHits = 0;
+            lastChecksum = sum;
+            if (wallHits >= 3) { // 连续 3 次静止（2.4s）才判碰壁，画面抖动不触发
+              driftIdx = (driftIdx + 1) % 4;
+              wallHits = 0;
+              lastDriftChange = now;
+              pbToastOnce('wall' + driftIdx + Math.floor(now / 30000), 8000, '🧱 疑似碰壁，弹簧漂移已转向' + DRIFT_NAMES[DRIFT_AXES[driftIdx]], '#a35cff');
+            }
           }
         }
       }
