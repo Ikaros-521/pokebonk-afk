@@ -5,7 +5,7 @@
  * ============================================================ */
 function PB_AFK_CORE() {
   'use strict';
-  var PB_AFK_VERSION = '2.2.2'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
+  var PB_AFK_VERSION = '2.2.3'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
   if (window.__PB_AFK_ACTIVE__) return;
   window.__PB_AFK_ACTIVE__ = true;
 
@@ -323,6 +323,8 @@ function PB_AFK_CORE() {
   }
   var navTarget = null, lastNavSeen = 0, navWasActive = false;
   var navActiveState = false, navTextState = ''; // 供 updateStatus 读取
+  var navArrivedAt = 0; // 到达点位（标签贴中心）时刻，超时拉黑放弃
+  var navBlacklist = []; // 放弃过的标签位置 [{x,y,at}]，20s 内不再选中（防到达死循环）
   // 捕捉追捕：游戏罗盘（.compass）最高优先级指向"等待捕捉的虚弱精灵"（dataset.k 以
   // capture 专属色 #5af0ff 结尾；boss/友球/宝箱/totem/召唤点为其他颜色可排除）。
   // .cp-tip 的 rotate 角 = 目标屏幕方位，.cp-d 文本 = 距离。追捕模式：停攻击、按方位
@@ -735,12 +737,29 @@ function PB_AFK_CORE() {
         var dx = navTarget.x - cx, dy = navTarget.y - cy;
         var dead = 44; // 屏幕像素死区
         var dCenter = Math.hypot(dx, dy);
+        // 黑名单：放弃过的标签位置（±60px 内）本轮不再选中，防止"到达→放弃→再选中"死循环
+        for (var bl2 = navBlacklist.length - 1; bl2 >= 0; bl2--) {
+          if (now - navBlacklist[bl2].at > 20000) { navBlacklist.splice(bl2, 1); continue; } // 20s 后解禁
+          if (Math.hypot(navTarget.x - navBlacklist[bl2].x, navTarget.y - navBlacklist[bl2].y) < 60) {
+            navTarget = null;
+            break;
+          }
+        }
+      }
+      navActive = !!navTarget;
+      if (navActive) {
+        var dx = navTarget.x - cx, dy = navTarget.y - cy;
+        var dead = 44; // 屏幕像素死区
+        var dCenter = Math.hypot(dx, dy);
         if (dCenter < 70) {
           // 已到达点位（标签贴近屏幕中心）：站定不动，交给 E 定时拾取/激活；
           // 否则死区边缘抖动导致方向乱切 = 原地乱走
           navDir = null;
           if (!navArrivedAt) navArrivedAt = now;
-          if (now - navArrivedAt > 8000) navTarget = null; // 8s 未交互完成 → 放弃目标恢复绕圈
+          if (now - navArrivedAt > 6000) { // 6s 未交互完成 → 拉黑该位置并放弃
+            navBlacklist.push({ x: navTarget.x, y: navTarget.y, at: now });
+            navTarget = null;
+          }
         } else {
           navArrivedAt = 0;
           navDir = {
