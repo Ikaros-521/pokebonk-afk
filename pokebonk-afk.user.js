@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      2.0.0
+// @version      2.1.0
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -22,7 +22,7 @@
  * ============================================================ */
 function PB_AFK_CORE() {
   'use strict';
-  var PB_AFK_VERSION = '1.9.4'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
+  var PB_AFK_VERSION = '2.1.0'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
   if (window.__PB_AFK_ACTIVE__) return;
   window.__PB_AFK_ACTIVE__ = true;
 
@@ -376,6 +376,32 @@ function PB_AFK_CORE() {
       for (var i = 0; i < d.length; i += 397) sum = (sum + d[i] + d[i + 1] + d[i + 2]) % 100000007;
       return sum;
     } catch (e) { return -1; }
+  }
+  // 小地图上找可捕捉目标：R.Capture 敌人画为"精灵头像 + 青色 #5af0ff 环"（超范围钳到边缘），
+  // 青色在小地图上独一无二 → 扫描青色像素簇 = 目标方位（玩家恒在小地图中心 200,200，比例 200px=60m）
+  function mmFindCapture() {
+    try {
+      var mm = document.querySelector('.minimap');
+      if (!mm || !mm.getContext) return null;
+      var ctx = mm.getContext('2d');
+      if (!ctx) return null;
+      var W = mm.width || 400;
+      var d = ctx.getImageData(0, 0, W, W).data;
+      var sx = 0, sy = 0, cnt = 0;
+      for (var y = 0; y < W; y += 2) {
+        for (var x = 0; x < W; x += 2) {
+          var i = (y * W + x) * 4;
+          var r = d[i], g = d[i + 1], b = d[i + 2];
+          if (r > 50 && r < 140 && g > 210 && b > 220) { sx += x; sy += y; cnt++; } // 青色 #5af0ff 容差
+        }
+      }
+      if (cnt < 6) return null; // 像素太少 = 没有捕捉目标图标
+      var mx = sx / cnt, my = sy / cnt;
+      var dx = mx - W / 2, dy = my - W / 2;
+      var distM = Math.round(Math.hypot(dx, dy) * 60 / (W / 2)); // px → 米
+      var deg = Math.atan2(dy, dx) * 180 / Math.PI;
+      return { deg: deg, dist: distM };
+    } catch (e) { return null; }
   }
   // 地图标记追踪：玩家在 Tab 大地图点击放置的标记（最多 3 个）会生成 .compass.mkpin
   // DOM 元素（dataset.k=点位类型、.cp-tip rotate=方位、.cp-d=距离），4 米内自动清除。
@@ -756,8 +782,11 @@ function PB_AFK_CORE() {
     if (!pinActive && wasPinActive) pbToastOnce('pinExit', 3000, '📍 到达地图标记，恢复转圈策略', '#ffd23a');
     wasPinActive = pinActive;
 
-    // ---- 捕捉追捕检测：罗盘指向 capture 色 marker = 有等待捕捉的虚弱精灵 ----
-    var catchDirActive = false;
+    // ---- 捕捉追捕检测（双源）----
+    //   a) 罗盘指向 capture 色 marker = 有**已虚弱**精灵等待捕捉（近距离，prompt 可扔球）
+    //   b) 小地图青色环 = **未虚弱**的可捕捉目标（蛋/野生精灵等，60m 全径，超范围钳到边缘）
+    //   追捕时朝目标方向走；未虚弱目标不停攻击（打残它触发 weakened）；靠近后扔球。
+    var catchDirActive = false, catchSource = '';
     try {
       var comp = document.querySelector('.compass');
       if (comp && comp.style.display !== 'none' &&
@@ -769,13 +798,23 @@ function PB_AFK_CORE() {
           var dir = dirFromAngle((rot - Math.PI / 2) * 180 / Math.PI);
           var dEl = comp.querySelector('.cp-d');
           catchDir = dir; catchDist = (dEl ? dEl.textContent : '').trim();
-          catchDirActive = true;
+          catchDirActive = true; catchSource = 'compass';
           lastCatchSeen = now;
         }
       }
     } catch (e) {}
-    catchMode = settings.catchPriority && (now - lastCatchSeen < 1500);
-    if (catchMode && !wasCatchMode) pbToastOnce('catchEnter', 3000, '🎯 发现等待捕捉的精灵，追捕中' + (catchDist ? '（' + catchDist + '）' : ''), '#36c96a');
+    if (!catchDirActive && settings.catchPriority) { // 罗盘无信号 → 小地图找青色捕捉环
+      var mmR = mmFindCapture();
+      if (mmR) {
+        catchDir = dirFromAngle(mmR.deg);
+        catchDist = mmR.dist + '米';
+        catchDirActive = true; catchSource = 'mm';
+        lastCatchSeen = now;
+      }
+    }
+    // 停攻击仅针对"已虚弱等球"的罗盘追捕（防误杀其他怪）；小地图追捕继续攻击（打残目标触发 weakened）
+    catchMode = settings.catchPriority && (now - lastCatchSeen < 1500) && catchDirActive;
+    if (catchMode && !wasCatchMode) pbToastOnce('catchEnter', 3000, '🎯 发现可捕捉目标，追捕中' + (catchDist ? '（' + catchDist + '）' : '') + (catchSource === 'mm' ? ' · 保持攻击打残它' : ''), '#36c96a');
     if (!catchMode && wasCatchMode) pbToastOnce('catchExit', 3000, '捕捉结束，恢复转圈策略', '#3fd769');
     wasCatchMode = catchMode;
 
@@ -842,21 +881,23 @@ function PB_AFK_CORE() {
     } else {
       seq[phase].forEach(function (d) { want.add(d.code); });
     }
-    // 追捕/寻路期间停空格/Shift/R——防止打死要抓的精灵
-    if (!catchMode && settings.spaceMode === 'hold') {
+    // 追捕期间停空格/Shift/R 仅限"已虚弱等球"的罗盘追捕（防误杀其他怪）；
+    // 小地图追捕（目标未虚弱）不停攻击——攻击正是把目标打残进 weakened 的手段
+    var holdAttacks = catchMode && catchSource === 'compass';
+    if (!holdAttacks && settings.spaceMode === 'hold') {
       want.add(KEY.space.code);
-    } else if (settings.spaceMode === 'tap' && now - lastSpace >= num(settings.spaceEvery, 400)) {
+    } else if (!holdAttacks && settings.spaceMode === 'tap' && now - lastSpace >= num(settings.spaceEvery, 400)) {
       lastSpace = now; tap(KEY.space, num(settings.spaceHold, 90), now); want.add(KEY.space.code);
     }
-    if (settings.shiftMode === 'hold') {
+    if (!holdAttacks && settings.shiftMode === 'hold') {
       want.add(KEY.shift.code);
-    } else if (!catchMode && settings.shiftMode === 'tap' && now - lastShift >= num(settings.shiftEvery, 2000)) {
+    } else if (!holdAttacks && settings.shiftMode === 'tap' && now - lastShift >= num(settings.shiftEvery, 2000)) {
       lastShift = now; tap(KEY.shift, num(settings.shiftHold, 150), now); want.add(KEY.shift.code);
     }
     // 大招 R：充能好就放（未充能时按了也无副作用，间隔探一次）
-    if (!catchMode && settings.ultMode === 'hold') {
+    if (!holdAttacks && settings.ultMode === 'hold') {
       want.add(KEY.r.code);
-    } else if (!catchMode && settings.ultMode === 'tap' && now - lastUlt >= num(settings.ultEvery, 900)) {
+    } else if (!holdAttacks && settings.ultMode === 'tap' && now - lastUlt >= num(settings.ultEvery, 900)) {
       lastUlt = now; tap(KEY.r, num(settings.ultHold, 120), now); want.add(KEY.r.code);
     }
     // 交互 E：拾取/激活/捕捉（无目标时按了无副作用，短间隔探；卡死时自动退避延长）
@@ -982,7 +1023,7 @@ function PB_AFK_CORE() {
         (settings.ultMode === 'off' ? '' : ' · R有就放') +
         (settings.interactMode === 'off' ? '' : ' · E拾取') +
         (pinActive ? ' · 📍标记:' + (pinKind || '') + (pinDist || '') : '') +
-        (catchMode ? ' · 🎯追捕' + (catchDist || '') : '') +
+        (catchMode ? ' · 🎯追捕' + (catchSource === 'mm' ? '(小地图)' : '') + (catchDist || '') : '') +
         (navActiveState ? ' · 🧭寻路:' + navTextState : '')
       : '已停止 · 按 F8 或点按钮启动';
     if (txt !== lastStatusText) { lastStatusText = txt; statusEl.textContent = txt; }
@@ -1172,7 +1213,7 @@ function PB_AFK_CORE() {
       { key: 'inter', name: '交互 · 捕捉 · 寻路', defOpen: true, build: function (b) {
         b.appendChild(selRow('交互 E', 'interactMode', [['tap', '点按'], ['off', '关']]));
         b.appendChild(numRow('E间隔', 'interactEvery', 150, 5000, 50));
-        b.appendChild(checkRow('优先追捕虚弱精灵', 'catchPriority'));
+        b.appendChild(checkRow('优先追捕可捕捉目标', 'catchPriority'));
         b.appendChild(selRow('自动寻路点位', 'navMode', [['safe', '开启(按下方多选)'], ['off', '关']]));
         navListEl = document.createElement('div');
         navListEl.className = 'pb-navlist';
