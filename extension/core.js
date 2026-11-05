@@ -5,7 +5,7 @@
  * ============================================================ */
 function PB_AFK_CORE() {
   'use strict';
-  var PB_AFK_VERSION = '2.1.0'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
+  var PB_AFK_VERSION = '2.2.1'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
   if (window.__PB_AFK_ACTIVE__) return;
   window.__PB_AFK_ACTIVE__ = true;
 
@@ -560,9 +560,9 @@ function PB_AFK_CORE() {
         return;
       }
       var laterBtn = null;
-      try { laterBtn = mEl.querySelector('.fu-actions .btn'); } catch (e) {}
+      try { laterBtn = mEl.querySelector('.fu-actions .btn, .dj-acts .btn.ghost'); } catch (e) {}
       if (laterBtn && /以后再说|más tarde|later/i.test((laterBtn.textContent || '').trim())) {
-        pbToastOnce('fuExit', 5000, '🔬 融合机器弹窗，已自动点"以后再说"', '#a35cff');
+        pbToastOnce('fuExit', 5000, '🥋 挑战弹窗，已自动点"以后再说"', '#a35cff');
         try { laterBtn.click(); } catch (e) {}
         return;
       }
