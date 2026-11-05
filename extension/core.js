@@ -25,8 +25,8 @@ function PB_AFK_CORE() {
     circleMode: 'spring',                               // 绕圈模式：spring=弹簧前进扫图 / circle=原地闭合圆
     catchPriority: true,                                // 有等待捕捉的虚弱精灵时：停攻击、按罗盘方位追过去、E 扔球
     navMode: 'safe',                                    // 自动寻路：safe=走向安全可交互点(按下方多选+优先级) / off=关
-    navItems: { altar: true, freechest: true, meowth: true, challenge: true, shrine: true, trick: true, ditto: true, magnet: true, snorlax: true, berry: true, hypno: false },
-    navOrder: ['altar', 'freechest', 'meowth', 'challenge', 'shrine', 'trick', 'ditto', 'magnet', 'snorlax', 'berry', 'hypno'],
+    navItems: { altar: true, freechest: true, meowth: true, challenge: true, shrine: true, trick: true, ditto: true, magnet: true, snorlax: true, berry: true, hypno: false, egg: true },
+    navOrder: ['altar', 'freechest', 'meowth', 'challenge', 'shrine', 'trick', 'ditto', 'magnet', 'snorlax', 'berry', 'hypno', 'egg'],
     autoUnpause: true,                          // 自动点"继续"关闭暂停
     autoRestart: true,                          // 死亡/胜利结算后自动再来一次
     autoReconnect: true,                        // 断线后自动点"重试"
@@ -49,6 +49,8 @@ function PB_AFK_CORE() {
     if (settings.navItems) settings.navItems.hypno = false;
     settings.navHypnoFixed = true;
   }
+  // v2.2.0 迁移：宝可梦蛋点位加入追踪（旧配置无此键默认开）
+  if (settings.navItems && settings.navItems.egg === undefined) settings.navItems.egg = true;
   // enabled 会持久化：刷新/断线重连后若之前在挂机则自动恢复（见文件末尾）
   function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(settings)); } catch (e) {} }
 
@@ -302,7 +304,8 @@ function PB_AFK_CORE() {
     { key: 'magnet', name: '磁铁', words: ['磁力', '磁铁', 'imán', 'magnet'] },
     { key: 'snorlax', name: '卡比兽', words: ['卡比兽', 'snorlax'] },
     { key: 'berry', name: '树果', words: ['树果', 'bayas', 'berry'] },
-    { key: 'hypno', name: '引梦貘人', words: ['引梦', 'hypno'] }
+    { key: 'hypno', name: '引梦貘人', words: ['引梦', 'hypno'] },
+    { key: 'egg', name: '宝可梦蛋', words: ['宝可梦蛋', '宠物蛋', 'egg'] }
   ];
   var NAV_DEFS_BY_KEY = {};
   NAV_DEFS.forEach(function (d) { NAV_DEFS_BY_KEY[d.key] = d; });
@@ -723,18 +726,46 @@ function PB_AFK_CORE() {
           if (best) { navTarget = best; lastNavSeen = now; break; } // 高优先级可见即选，排队语义
         }
         if (navTarget && now - lastNavSeen > 1200) navTarget = null; // 点位消失（已交互/走远）1.2s 后恢复
+        // 兜底：白名单没匹配到 → 追踪任意可见可交互标签（排除要花钱的 ₽ 点位）
+        if (!navTarget && settings.navAll) {
+          var bd = null, bdD = 1e9;
+          for (var bj = 0; bj < labels.length; bj++) {
+            var bl = labels[bj];
+            if (bl.style.display === 'none') continue;
+            var bop = parseFloat(bl.style.opacity);
+            if (isFinite(bop) && bop < 0.15) continue;
+            var btx = bl.textContent || '';
+            if (btx.indexOf('₽') !== -1) continue; // 老虎机/付费宝箱排除
+            var bx = parseFloat(bl.style.left), by = parseFloat(bl.style.top);
+            if (!isFinite(bx) || !isFinite(by)) continue;
+            var bdd = Math.hypot(bx - cx, by - cy);
+            if (bdd < bdD) { bdD = bdd; bd = { x: bx, y: by, text: btx.replace(/\s+/g, ' ').slice(0, 24) }; }
+          }
+          if (bd) { navTarget = bd; lastNavSeen = now; }
+        }
       } catch (e) {}
       navActive = !!navTarget;
       if (navActive) {
         var dx = navTarget.x - cx, dy = navTarget.y - cy;
-        var dead = 44; // 屏幕像素死区，防止贴近时抖动
-        navDir = {
-          a: dx < -dead, d: dx > dead,
-          w: dy < -dead, s: dy > dead
-        };
+        var dead = 44; // 屏幕像素死区
+        var dCenter = Math.hypot(dx, dy);
+        if (dCenter < 70) {
+          // 已到达点位（标签贴近屏幕中心）：站定不动，交给 E 定时拾取/激活；
+          // 否则死区边缘抖动导致方向乱切 = 原地乱走
+          navDir = null;
+          if (!navArrivedAt) navArrivedAt = now;
+          if (now - navArrivedAt > 8000) navTarget = null; // 8s 未交互完成 → 放弃目标恢复绕圈
+        } else {
+          navArrivedAt = 0;
+          navDir = {
+            a: dx < -dead, d: dx > dead,
+            w: dy < -dead, s: dy > dead
+          };
+        }
         if (navTarget !== null && !navWasActive) pbToastOnce('nav', 3000, '🧭 发现可交互点位，寻路前往：' + navTarget.text, '#36c96a');
-      } else if (navWasActive) {
-        pbToastOnce('navDone', 3000, '🧭 点位交互完成，恢复转圈策略', '#3fd769');
+      } else {
+        navArrivedAt = 0;
+        if (navWasActive) pbToastOnce('navDone', 3000, '🧭 点位交互完成，恢复转圈策略', '#3fd769');
       }
       navWasActive = navActive;
     } else {
@@ -855,12 +886,14 @@ function PB_AFK_CORE() {
       if (catchDir.s) want.add(KEY.s.code);
       if (catchDir.a) want.add(KEY.a.code);
       if (catchDir.d) want.add(KEY.d.code);
-    } else if (navActive && navDir) {
-      // 寻路模式：移动方向覆盖绕圈，朝屏幕上的点位标签走
-      if (navDir.w) want.add(KEY.w.code);
-      if (navDir.s) want.add(KEY.s.code);
-      if (navDir.a) want.add(KEY.a.code);
-      if (navDir.d) want.add(KEY.d.code);
+    } else if (navActive) {
+      // 寻路模式：朝标签走；已到达（标签贴屏幕中心）时站定等 E 拾取，不乱按方向键
+      if (navDir) {
+        if (navDir.w) want.add(KEY.w.code);
+        if (navDir.s) want.add(KEY.s.code);
+        if (navDir.a) want.add(KEY.a.code);
+        if (navDir.d) want.add(KEY.d.code);
+      }
     } else {
       seq[phase].forEach(function (d) { want.add(d.code); });
     }
