@@ -576,6 +576,20 @@ function PB_AFK_CORE() {
         try { laterBtn.click(); } catch (e) {}
         return;
       }
+      // c) 裂隙遗物弹窗（.rl-wrap，栏位满时的替换选择）→ 点"一个都不带"放弃
+      var rlWrap = null;
+      try { rlWrap = mEl.querySelector('.rl-wrap'); } catch (e) {}
+      if (rlWrap) {
+        var rbtns = mEl.querySelectorAll('.actions button');
+        for (var ri = 0; ri < rbtns.length; ri++) {
+          var rt = (rbtns[ri].textContent || '').trim();
+          if (rt.indexOf('一个都不带') !== -1 || rt.indexOf('一個都不帶') !== -1 || /^(sin |take )?(nada|nothing|none)$/i.test(rt)) {
+            pbToastOnce('relicSkip', 5000, '💎 遗物弹窗（栏位已满），已自动点"一个都不带"', '#a35cff');
+            try { rbtns[ri].click(); } catch (e) {}
+            return;
+          }
+        }
+      }
     }
     inCasino = false;
     for (mi = 0; mi < modals.length; mi++) {
