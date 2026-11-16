@@ -12,14 +12,19 @@ const old = fs.readFileSync(userjsPath, 'utf8');
 // header = 油猴元数据 + IIFE 开头（固定到第一个注释头之前，绝不累积 core 的内容）
 const headerEnd = old.indexOf('/* ============================================================');
 if (headerEnd < 0) throw new Error('old userscript: comment header not found');
-const header = old.slice(0, headerEnd);
+const headerRaw = old.slice(0, headerEnd);
 
 // footer = 注入保障段到文件尾（从旧文件尾部提取）
 const footerIdx = old.lastIndexOf('/* ---------------- 注入保障');
 const footer = old.slice(footerIdx - 2);
 
-const version = (old.match(/@version\s+(\S+)/) || [])[1];
-if (!version) throw new Error('old userscript: @version not found');
+// 版本单一来源 = core.js 的 PB_AFK_VERSION（此前从旧油猴文件回读 @version，
+// 版本改在 core 里时油猴头会漏同步——v2.4.0 起改为从 core 提取并回写 header）
+const version = (core.match(/PB_AFK_VERSION = '([^']+)'/) || [])[1];
+if (!version) throw new Error('core.js: PB_AFK_VERSION not found');
+const oldVersion = (old.match(/@version\s+(\S+)/) || [])[1];
+if (oldVersion && oldVersion !== version) console.log('版本变更:', oldVersion, '→', version);
+const header = headerRaw.replace(/@version\s+\S+/, '@version      ' + version);
 
 const full = header + core + '\n' + footer;
 fs.writeFileSync(userjsPath, full);

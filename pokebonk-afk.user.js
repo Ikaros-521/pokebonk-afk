@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      2.3.0
+// @version      2.4.1
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -22,7 +22,7 @@
  * ============================================================ */
 function PB_AFK_CORE() {
   'use strict';
-  var PB_AFK_VERSION = '2.3.0'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
+  var PB_AFK_VERSION = '2.4.1'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
   if (window.__PB_AFK_ACTIVE__) return;
   window.__PB_AFK_ACTIVE__ = true;
 
@@ -134,13 +134,31 @@ function PB_AFK_CORE() {
     if (nid != null) { byNative.delete(id); nativeCAF(nid); }
   };
 
-  /* ---------------- 2. 真实可见性跟踪 + 防自动暂停 ----------------
-   * 注意顺序：先注册“真实可见性跟踪器”，再注册事件拦截器，
-   * 这样 visibilitychange 到达时我们仍能感知真实的 hidden 值。 */
-  var realHidden = document.hidden;
-  document.addEventListener('visibilitychange', function () {
+  /* ---------------- 2. 真实可见性/焦点跟踪 + 防自动暂停 ----------------
+   * v2.4.0：官方新增“窗口不在前台就暂停”的监测。桌面端的链路是：
+   *   窗口失焦/页面被完全遮挡 → 浏览器强制释放指针锁 → 游戏 input 收到
+   *   pointerlockchange（解锁）→ onUserUnlock → run.pause()
+   * document.hidden / hasFocus 伪装拦不住它（它不读这两个值）。
+   * 应对：真实失焦/不可见时，把 pointerlockchange 的“解锁方向”事件拦掉，
+   * 游戏以为指针锁还在，就不会触发解锁暂停；前台手动 Esc 照常暂停。
+   * 顺序约定：真实状态跟踪器（window 捕获）→ 伪装 getter → 事件拦截器，
+   * 同目标同阶段按注册顺序派发，跟踪器必须排在拦截器前面才能读到真实值。 */
+  var nativeHiddenGet = (function () {
+    try {
+      var d = Object.getOwnPropertyDescriptor(Document.prototype, 'hidden');
+      return d && d.get ? d.get : null;
+    } catch (e) { return null; }
+  })();
+  function realHiddenNow() {
+    if (nativeHiddenGet) { try { return !!nativeHiddenGet.call(document); } catch (e) {} }
+    return false;
+  }
+  var realHidden = realHiddenNow();
+  var realFocused = true;
+  // 真实状态跟踪（注册在最前，能收到真实事件）
+  window.addEventListener('visibilitychange', function () {
     var was = realHidden;
-    realHidden = document.hidden;
+    realHidden = realHiddenNow();
     if (realHidden && !was) {
       // 刚切到后台：踢醒被冻结的游戏循环，让它经由 Worker 继续跑
       var cb = lastRafCb; lastRafCb = null;
@@ -160,8 +178,10 @@ function PB_AFK_CORE() {
       syncWorker();
     }
   }, true);
+  window.addEventListener('focus', function () { realFocused = true; }, true);
+  window.addEventListener('blur', function () { realFocused = false; }, true);
 
-  // 让游戏认为页面永远可见、永远聚焦（自动暂停的判断依据全部失效）
+  // 让游戏认为页面永远可见、永远聚焦（基于这两个值的自动暂停判断全部失效）
   try {
     Object.defineProperty(Document.prototype, 'hidden', { configurable: true, get: function () { return false; } });
     Object.defineProperty(Document.prototype, 'visibilityState', { configurable: true, get: function () { return 'visible'; } });
@@ -169,16 +189,24 @@ function PB_AFK_CORE() {
   try { document.hasFocus = function () { return true; }; } catch (e) {}
 
   // 拦截会触发暂停/清空按键的事件（我们注册在前，游戏监听器收不到）
-  ['visibilitychange', 'blur', 'pagehide'].forEach(function (type) {
+  // freeze：页面生命周期冻结事件，游戏收到会触发存档挂起，一并拦掉
+  ['visibilitychange', 'blur', 'pagehide', 'freeze'].forEach(function (type) {
     window.addEventListener(type, function (e) { e.stopImmediatePropagation(); }, true);
     document.addEventListener(type, function (e) { e.stopImmediatePropagation(); }, true);
   });
 
-  // 真实焦点跟踪（注册在拦截器之前，能收到真实事件）：
-  // 用于"挂机未启动 + 页面在前台"时不打扰用户手动暂停
-  var realFocused = true;
-  window.addEventListener('focus', function () { realFocused = true; }, true);
-  window.addEventListener('blur', function () { realFocused = false; }, true);
+  // pointerlockchange 解锁拦截（v2.4.0 防失焦暂停的核心）：
+  // 仅在挂机开启、且真实处于不可见/失焦状态时，拦下“解锁方向”的事件
+  // （document.pointerLockElement 为真 = 上锁方向，放行不影响重新上锁）。
+  // 挂机关闭时不拦截，保持游戏原生行为。
+  function blockUnlock(e) {
+    if (!settings.enabled) return;
+    if (realHidden || !realFocused) {
+      try { if (!document.pointerLockElement) e.stopImmediatePropagation(); } catch (e2) {}
+    }
+  }
+  window.addEventListener('pointerlockchange', blockUnlock, true);
+  document.addEventListener('pointerlockchange', blockUnlock, true);
 
   /* ---------------- 3. 近无声保活音频 ----------------
    * 正在播放声音的标签页不受 Chrome 后台定时器限流。
@@ -528,9 +556,10 @@ function PB_AFK_CORE() {
   }
   function overlayWatcherTick() {
     if (!settings.autoUnpause && !settings.autoRestart && !settings.autoPick && !settings.autoReconnect) { watcherRetry = 0; pickRetry = 0; return; }
-    // 挂机运行中始终处理；挂机关闭时只在页面不在前台（用户切走了）才处理，
-    // 避免用户本人正在操作界面时被抢点。
-    if (!(settings.enabled || !realFocused)) { watcherRetry = 0; pickRetry = 0; return; }
+    // v2.4.1：守护器只在挂机开启时工作——F8 关掉 = 全停（含弹窗自动处理）。
+    // 旧逻辑"关闭但页面切到后台时仍处理"在 realFocused 修复后暴露出来，
+    // 用户反馈"关不掉，只停了走路"：关闭态还应自动点继续/重开/选卡，已移除。
+    if (!settings.enabled) { watcherRetry = 0; pickRetry = 0; inCasino = false; return; }
 
     // 取最上层的游戏弹窗（升级三选一 / 暂停 / 结算 都是 .modal，类名随版本会变，
     // 所以只依赖 .modal 容器和按钮文本，不依赖具体面板类名）
