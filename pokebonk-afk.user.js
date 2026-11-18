@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokéBonk 后台挂机助手 (AFK Auto-Player)
 // @namespace    pokebonk-afk
-// @version      2.4.1
+// @version      2.5.0
 // @description  阻止切屏自动暂停、后台持续运行，并自动 WASD 绕圈 + 空格 + Shift 打怪；F8 启停，F9 面板显隐。仅在 pokebonk.com 生效。
 // @author       ZCode
 // @match        https://pokebonk.com/*
@@ -22,7 +22,7 @@
  * ============================================================ */
 function PB_AFK_CORE() {
   'use strict';
-  var PB_AFK_VERSION = '2.4.1'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
+  var PB_AFK_VERSION = '2.5.0'; // 与油猴 @version / 扩展 manifest 同步（build.js 校验）
   if (window.__PB_AFK_ACTIVE__) return;
   window.__PB_AFK_ACTIVE__ = true;
 
@@ -38,6 +38,7 @@ function PB_AFK_CORE() {
     interactMode: 'tap', interactEvery: 1500,           // 交互 E：拾取/激活/捕捉（短间隔探）
     interactPick: 1,                                    // 交互弹窗选第几项（1-4；没有该项则兜底 1 → Esc）
     pickMode: 'quality',                                // 弹窗选择：quality=品质最高优先 / index=按序号
+    skillFirst: true,                                   // 技能优先：升级弹窗出现"新招式"卡时优先选（技能栏满后游戏不再提供新招式，自动恢复品质优先）
     pickLog: true,                                      // 自动选择时在屏幕上短暂提示选了什么
     circleMode: 'spring',                               // 绕圈模式：spring=弹簧前进扫图 / circle=原地闭合圆
     catchPriority: true,                                // 有等待捕捉的虚弱精灵时：停攻击、按罗盘方位追过去、E 扔球
@@ -638,41 +639,61 @@ function PB_AFK_CORE() {
       var qualityCapable = !!modal.querySelector('.cards .card.offer, .cards .card.mini');
       var target = 0;
       if (settings.pickMode === 'quality' && qualityCapable) {
-        var bestTier = -1, ties = [];
-        var fullCount = 0, scoreCount = 0;
-        for (var q = 0; q < cards.length; q++) {
-          var card = cards[q];
-          var isOffer = card.classList.contains('offer');
-          var isMini = card.classList.contains('mini');
-          if (!isOffer && !isMini) continue; // 融合/契约等非品质卡不计
-          if (cardFull(card)) { fullCount++; continue; }   // 已满卡跳过（自动降级）
-          var tier = null;
-          if (isOffer) {
-            var rarEl = null;
-            try { rarEl = card.querySelector('.top .rar'); } catch (e) {}
-            tier = rarityTier(rarEl ? rarEl.textContent : '');
-            if (tier == null) { // .rar 缺失/新招式卡 → 扫 .top 全文兜底
-              var topEl = null;
-              try { topEl = card.querySelector('.top'); } catch (e) {}
-              tier = rarityTier(topEl ? topEl.textContent : '');
-            }
-          } else { // mini 卡：--rc: var(--rN) → N 即档位（r0 普通 ... r4 传说）
-            var rc = card.style.getPropertyValue('--rc') || '';
-            var mRC = rc.match(/--r(\d)/);
-            tier = mRC ? (+mRC[1] + 1) : null;
+        // v2.5.0 技能优先：开局技能栏没满时，升级弹窗会提供"新招式"卡（.rar 显示
+        // 招式/Movimiento 等非品质词——游戏规则：技能栏满后不再提供新招式，只给升级）。
+        // 出现即优先选它；不再出现（=技能已满）自动恢复品质优先，无需自己数格子。
+        // 语言无关判定：.offer 卡的 .rar 文本非空且解析不出品质档 = 新招式卡。
+        var moveIdx = -1;
+        if (settings.skillFirst) {
+          for (var sq = 0; sq < cards.length; sq++) {
+            var sc = cards[sq];
+            if (!sc.classList.contains('offer') || cardFull(sc)) continue;
+            var sr = null;
+            try { sr = sc.querySelector('.top .rar'); } catch (e) {}
+            var st = sr ? (sr.textContent || '').trim() : '';
+            if (st && rarityTier(st) == null) { moveIdx = sq; break; }
           }
-          if (tier == null) tier = -1;
-          scoreCount++;
-          if (tier > bestTier) { bestTier = tier; ties = [q]; }
-          else if (tier === bestTier) ties.push(q);
         }
-        if (scoreCount === 0 && fullCount > 0) {
-          // 全部已满 → Esc 关闭（点了也无效）
-          fire(KEY.esc, 'keydown'); fire(KEY.esc, 'keyup');
-          pickRetry = 0;
-          return;
+        if (moveIdx >= 0) {
+          target = moveIdx;
+          if (pickRetry === 1) pbToastOnce('skillFirst' + Math.floor(performance.now() / 5000), 1800, '🎯 技能优先：选新招式（技能栏未满）', '#3a8cff');
+        } else {
+          var bestTier = -1, ties = [];
+          var fullCount = 0, scoreCount = 0;
+          for (var q = 0; q < cards.length; q++) {
+            var card = cards[q];
+            var isOffer = card.classList.contains('offer');
+            var isMini = card.classList.contains('mini');
+            if (!isOffer && !isMini) continue; // 融合/契约等非品质卡不计
+            if (cardFull(card)) { fullCount++; continue; }   // 已满卡跳过（自动降级）
+            var tier = null;
+            if (isOffer) {
+              var rarEl = null;
+              try { rarEl = card.querySelector('.top .rar'); } catch (e) {}
+              tier = rarityTier(rarEl ? rarEl.textContent : '');
+              if (tier == null) { // .rar 缺失/新招式卡 → 扫 .top 全文兜底
+                var topEl = null;
+                try { topEl = card.querySelector('.top'); } catch (e) {}
+                tier = rarityTier(topEl ? topEl.textContent : '');
+              }
+            } else { // mini 卡：--rc: var(--rN) → N 即档位（r0 普通 ... r4 传说）
+              var rc = card.style.getPropertyValue('--rc') || '';
+              var mRC = rc.match(/--r(\d)/);
+              tier = mRC ? (+mRC[1] + 1) : null;
+            }
+            if (tier == null) tier = -1;
+            scoreCount++;
+            if (tier > bestTier) { bestTier = tier; ties = [q]; }
+            else if (tier === bestTier) ties.push(q);
+          }
+          if (scoreCount === 0 && fullCount > 0) {
+            // 全部已满 → Esc 关闭（点了也无效）
+            fire(KEY.esc, 'keydown'); fire(KEY.esc, 'keyup');
+            pickRetry = 0;
+            return;
+          }
+          target = ties.length ? (pref < ties.length ? ties[pref] : ties[0]) : 0;
         }
-        target = ties.length ? (pref < ties.length ? ties[pref] : ties[0]) : 0;
       } else {
         target = Math.min(cards.length - 1, pref);
       }
@@ -1367,6 +1388,7 @@ function PB_AFK_CORE() {
       } },
       { key: 'auto', name: '弹窗与自动化', defOpen: false, build: function (b) {
         b.appendChild(selRow('弹窗选择', 'pickMode', [['quality', '品质优先'], ['index', '按序号']]));
+        b.appendChild(checkRow('技能没满先选新招式', 'skillFirst'));
         b.appendChild(selRow('弹窗选第几项', 'interactPick', [['1', '第 1 项'], ['2', '第 2 项'], ['3', '第 3 项'], ['4', '第 4 项']]));
         b.appendChild(checkRow('自动选升级(第1项)', 'autoPick'));
         b.appendChild(checkRow('自动关闭暂停(点继续)', 'autoUnpause'));
